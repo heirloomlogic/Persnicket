@@ -1,0 +1,27 @@
+name: Lint
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  swift-format-lint:
+    name: swift-format (strict)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log toolchain versions
+        run: |
+          xcode-select -p
+          xcrun swift --version
+          xcrun swift-format --version || true
+
+      - name: Verify embedded fallback is in sync with .swift-format
+        run: |
+          ./bin/regenerate-embedded-fallback
+          git diff --exit-code -- Plugins/SwiftFormatBuildToolPlugin/plugin.swift Plugins/SwiftFormatCommandPlugin/plugin.swift
+
+      - name: Lint (strict)
+        run: ./bin/lint

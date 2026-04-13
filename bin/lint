@@ -1,0 +1,25 @@
+#!/usr/bin/env sh
+# Lint Swift sources without going through SwiftPM (fast path for CI / pre-commit).
+# Uses the canonical `.swift-format` at the repo root. Runs in --strict mode:
+# any finding is a non-zero exit. Defaults to linting ./Plugins; pass paths
+# as args to override.
+set -eu
+cd "$(dirname "$0")/.."
+
+if [ ! -f .swift-format ]; then
+    echo "error: .swift-format not found at repo root" >&2
+    exit 1
+fi
+
+if [ "$(uname)" = "Darwin" ]; then
+    SF="xcrun swift-format"
+else
+    SF="swift-format"
+fi
+
+if [ "$#" -eq 0 ]; then
+    set -- Plugins
+fi
+
+# shellcheck disable=SC2086
+exec $SF lint --strict --recursive --parallel --configuration .swift-format "$@"
