@@ -1,0 +1,52 @@
+#!/usr/bin/env sh
+# Regenerates the `fallbackConfigJSON` Swift string literal in both plugin
+# source files from the canonical `.swift-format` at the repo root.
+#
+# SwiftPM plugin targets cannot share Swift source across targets and cannot
+# carry resources, so each plugin must embed the fallback config as a literal.
+# This script makes `.swift-format` the single source of truth and rewrites
+# the literals idempotently. CI enforces drift via `git diff --exit-code`
+# after a regen.
+set -eu
+cd "$(dirname "$0")/.."
+
+CONFIG=".swift-format"
+FILE_A="Plugins/SwiftFormatBuildToolPlugin/plugin.swift"
+FILE_B="Plugins/SwiftFormatCommandPlugin/plugin.swift"
+
+[ -f "$CONFIG" ] || { echo "error: $CONFIG not found" >&2; exit 1; }
+[ -f "$FILE_A" ] || { echo "error: $FILE_A not found" >&2; exit 1; }
+[ -f "$FILE_B" ] || { echo "error: $FILE_B not found" >&2; exit 1; }
+
+# Build the indented payload: Swift `"""` multi-line literals strip common
+# leading whitespace based on the closing delimiter's column, so every line
+# in the payload needs to be indented at least 4 spaces to match `    """`.
+payload_file=$(mktemp)
+trap 'rm -f "$payload_file"' EXIT
+awk '{ if ($0 == "") print ""; else print "    " $0 }' "$CONFIG" > "$payload_file"
+
+rewrite() {
+    file=$1
+    tmp=$(mktemp)
+    awk -v payload_file="$payload_file" '
+        /^private let fallbackConfigJSON = """$/ {
+            print
+            while ((getline line < payload_file) > 0) print line
+            close(payload_file)
+            skip = 1
+            next
+        }
+        skip && /^    """$/ {
+            skip = 0
+            print
+            next
+        }
+        !skip { print }
+    ' "$file" > "$tmp"
+    mv "$tmp" "$file"
+}
+
+rewrite "$FILE_A"
+rewrite "$FILE_B"
+
+echo "ok: regenerated fallbackConfigJSON literal in both plugin files from $CONFIG"

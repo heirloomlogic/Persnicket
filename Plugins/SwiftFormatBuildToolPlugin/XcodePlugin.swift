@@ -19,6 +19,7 @@ extension SwiftFormatBuildToolPlugin: XcodeBuildToolPlugin {
                 executable: URL(fileURLWithPath: "/usr/bin/xcrun"),
                 arguments: [
                     "swift-format", "lint",
+                    "--parallel",
                     "--configuration", configPath,
                     "--recursive",
                     context.xcodeProject.directoryURL.path,

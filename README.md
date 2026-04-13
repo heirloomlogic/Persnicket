@@ -1,6 +1,6 @@
 # SwiftFormatPlugin
 
-A lightweight SPM plugin that lints and formats Swift source files using `swift-format` from the Swift 6 toolchain.
+A lightweight SPM plugin that lints and formats Swift source files using the Swift 6 toolchain's `swift-format` command.
 
 Works on **macOS**, **Linux**, and **Windows**.
 
@@ -58,7 +58,7 @@ In Xcode: **right-click your project or package → SwiftFormatCommandPlugin**.
 
 The plugin looks for a `.swift-format` configuration file in your **project root**. If one is found, it will be used for both linting and formatting.
 
-If no `.swift-format` file is present, the plugin falls back to a sensible built-in default configuration that includes, among other things:
+If no `.swift-format` file is present, the plugin falls back to a default configuration. This config is fairly strict, and includes, among other things:
 
 - 4-space indentation, 120-character line length
 - Ordered imports and trailing commas
@@ -66,7 +66,7 @@ If no `.swift-format` file is present, the plugin falls back to a sensible built
 - `AllPublicDeclarationsHaveDocumentation`
 - `FileScopedDeclarationPrivacy` set to `private`
 
-To customize, define your own `.swift-format` file in the root of your project. You can generate a starter configuration with:
+To use your own configuration, create a `.swift-format` file in the root of your project. You can generate a starter configuration with the following:
 
 ```bash
 # macOS
@@ -76,6 +76,12 @@ xcrun swift-format dump-configuration > .swift-format
 swift-format dump-configuration > .swift-format
 ```
 
+## Toolchain Compatibility
+
+Match the Swift toolchain on your CI runner to the one on your development machine. Major.minor must align; patch should not matter.
+
+The `swift-format` configuration format has been observed to ship breaking changes without a version bump. A `.swift-format` file that parses cleanly under one Swift minor version may fail under another. If local dev and CI drift, you'll see lint failures that can't be reproduced locally.
+
 ## How It Works
 
 On **macOS**, the plugins invoke `swift-format` via `/usr/bin/xcrun`, which resolves to the binary in your active Xcode toolchain. On **Linux** and **Windows**, the plugins invoke `swift-format` directly from your `$PATH`. This means:
@@ -83,6 +89,22 @@ On **macOS**, the plugins invoke `swift-format` via `/usr/bin/xcrun`, which reso
 - **Zero compile-time cost** — no `swift-syntax` dependency tree to build.
 - **Always in sync** with your toolchain's Swift version.
 - **No binary artifacts** to download or manage.
+
+## Development
+
+This repo ships a few shell wrappers under `bin/` for working on the plugin itself:
+
+| Script | Purpose |
+|---|---|
+| `bin/format` | Runs `SwiftFormatCommandPlugin` on this package to format its own sources. |
+| `bin/lint` | Fast-path lint via `swift-format` directly (skips SwiftPM). Runs in `--strict` mode. |
+| `bin/regenerate-embedded-fallback` | Rewrites the embedded `fallbackConfigJSON` literal in both plugin source files from the canonical `.swift-format` at the repo root. |
+
+**Editing the default config.** The `.swift-format` file at the repo root is the single source of truth for this plugin's default configuration. If you change it, run `bin/regenerate-embedded-fallback` before committing — the script rewrites the `private let fallbackConfigJSON = """..."""` block in both plugin source files to match.
+
+**Why the duplication exists.** SwiftPM plugin targets cannot share Swift source across targets and cannot carry resources (no `resources:` parameter on `.plugin(...)`, no `PluginContext` API to locate the plugin's own on-disk files), so both `SwiftFormatBuildToolPlugin/plugin.swift` and `SwiftFormatCommandPlugin/plugin.swift` must embed the fallback as a literal. The generator + CI drift check turns this structural duplication into a managed one: you only ever edit `.swift-format`, and CI fails if the embedded literals are out of sync.
+
+**CI.** `.github/workflows/lint.yml` runs on every pull request and push to `main`. It regenerates the embedded literals and verifies there's no diff (drift check), then runs `bin/lint` in strict mode.
 
 ## License
 
