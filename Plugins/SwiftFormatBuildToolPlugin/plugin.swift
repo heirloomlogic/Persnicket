@@ -21,6 +21,14 @@ struct SwiftFormatBuildToolPlugin: BuildToolPlugin {
             pluginWorkDirectory: context.pluginWorkDirectoryURL
         )
 
+        if case .configError(let stderr) = probeSwiftFormat(
+            configPath: configPath,
+            pluginWorkDirectory: context.pluginWorkDirectoryURL
+        ) {
+            emitConfigWarning(configPath: configPath, stderr: stderr)
+            return []
+        }
+
         var arguments: [String] = [
             "swift-format", "lint",
             "--parallel",
@@ -74,7 +82,8 @@ struct SwiftFormatBuildToolPlugin: BuildToolPlugin {
             Diagnostics.remark(
                 """
                 No .swift-format found in project root, using the bundled fallback configuration.
-                • To learn about swift-format, go to https://github.com/swiftlang/swift-format
+                • Heirloom Logic SwiftFormatPlugin repository: https://github.com/heirloomlogic/SwiftFormatPlugin
+                • Swift Programming Language `swift-format` repository: https://github.com/swiftlang/swift-format
                 • Rules reference: https://github.com/swiftlang/swift-format/blob/main/Documentation/RuleDocumentation.md
                 """
             )
@@ -115,6 +124,81 @@ struct SwiftFormatBuildToolPlugin: BuildToolPlugin {
             )
         }
     }
+
+    // MARK: - Preflight Probe
+
+    /// Runs swift-format against a trivial file to verify the config is parseable.
+    ///
+    /// This catches config/toolchain mismatches before SPM's prebuild command
+    /// runs — where a non-zero exit would fail the build.
+    func probeSwiftFormat(configPath: String, pluginWorkDirectory: URL) -> ProbeResult {
+        let probeFile = pluginWorkDirectory.appendingPathComponent("_swift_format_probe.swift")
+        do {
+            try "// probe\n".write(to: probeFile, atomically: true, encoding: .utf8)
+        } catch {
+            return .ok
+        }
+
+        let process = Process()
+        process.executableURL = swiftFormatExecutable()
+        process.arguments = ["swift-format", "lint", "--configuration", configPath, probeFile.path]
+
+        let stderrPipe = Pipe()
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = stderrPipe
+
+        do {
+            try process.run()
+            let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+
+            guard process.terminationStatus != EXIT_SUCCESS else {
+                return .ok
+            }
+
+            let stderr = String(data: stderrData, encoding: .utf8) ?? ""
+            let lower = stderr.lowercased()
+            if lower.contains("unable to read configuration")
+                || lower.contains("invalid configuration")
+                || lower.contains("unknown argument")
+            {
+                return .configError(stderr: stderr)
+            }
+            return .ok
+        } catch {
+            return .ok
+        }
+    }
+
+    /// Emits a detailed warning when the preflight probe detects a config/toolchain
+    /// mismatch, and explains that linting has been skipped.
+    func emitConfigWarning(configPath: String, stderr: String) {
+        var version: Int?
+        if case .ok(let v) = validateConfig(at: configPath) { version = v }
+        let versionString = version.map(String.init) ?? "unknown"
+        Diagnostics.warning(
+            """
+            swift-format cannot parse the configuration — linting skipped.
+
+            The active toolchain's swift-format is incompatible with the config schema. \
+            This is a CI/toolchain setup issue, not a source code problem.
+
+            --- swift-format stderr ---
+            \(stderr.trimmingCharacters(in: .whitespacesAndNewlines))
+            ---------------------------
+
+            • config: \(configPath)  (version: \(versionString))
+            • executable: \(swiftFormatExecutable().path) swift-format
+            • Fix: upgrade the toolchain to match the config schema, or pin \
+            the config to an older schema compatible with the active toolchain.
+            """
+        )
+    }
+}
+
+enum ProbeResult {
+    case ok
+    case configError(stderr: String)
 }
 
 enum ConfigValidation {

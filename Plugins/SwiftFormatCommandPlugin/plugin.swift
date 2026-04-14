@@ -64,30 +64,46 @@ struct SwiftFormatCommandPlugin: CommandPlugin {
 
         guard process.terminationReason == .exit, process.terminationStatus == EXIT_SUCCESS else {
             let stderr = String(data: stderrData, encoding: .utf8) ?? ""
-            var message = """
+            let lower = stderr.lowercased()
+            let isConfigError =
+                lower.contains("unable to read configuration")
+                || lower.contains("invalid configuration")
+                || lower.contains("unknown argument")
+
+            if isConfigError {
+                var version: Int?
+                if case .ok(let v) = validateConfig(at: configPath) { version = v }
+                let versionString = version.map(String.init) ?? "unknown"
+                Diagnostics.warning(
+                    """
+                    swift-format cannot parse the configuration — formatting skipped for \
+                    target "\(targetName)".
+
+                    The active toolchain's swift-format is incompatible with the config schema. \
+                    This is a CI/toolchain setup issue, not a source code problem.
+
+                    --- swift-format stderr ---
+                    \(stderr.trimmingCharacters(in: .whitespacesAndNewlines))
+                    ---------------------------
+
+                    • config: \(configPath)  (version: \(versionString))
+                    • executable: \(swiftFormatExecutable().path) swift-format
+                    • Fix: upgrade the toolchain to match the config schema, or pin \
+                    the config to an older schema compatible with the active toolchain.
+                    """
+                )
+                return
+            }
+
+            Diagnostics.error(
+                """
                 swift-format format failed for target "\(targetName)" \
                 (status \(process.terminationStatus)).
                 --- swift-format stderr ---
                 \(stderr.isEmpty ? "(empty)" : stderr.trimmingCharacters(in: .whitespacesAndNewlines))
                 ---------------------------
                 """
-            if stderr.contains("Unable to read configuration") {
-                var version: Int?
-                if case .ok(let v) = validateConfig(at: configPath) { version = v }
-                let versionString = version.map(String.init) ?? "unknown"
-                message += """
-
-
-                    This error almost always means the active toolchain's bundled swift-format \
-                    is incompatible with the schema of:
-                      \(configPath)  (version: \(versionString))
-                    The schema "version" field does not always change between incompatible \
-                    releases, so breaks can be silent. Check `xcrun swift-format --version` \
-                    against the Swift release that produced this config, then upgrade the \
-                    toolchain or pin the config to an older schema.
-                    """
-            }
-            Diagnostics.error(message)
+            )
             return
         }
 
@@ -155,7 +171,8 @@ struct SwiftFormatCommandPlugin: CommandPlugin {
             Diagnostics.remark(
                 """
                 No .swift-format found in project root, using the bundled fallback configuration.
-                • To learn about swift-format, go to https://github.com/swiftlang/swift-format
+                • Heirloom Logic SwiftFormatPlugin repository: https://github.com/heirloomlogic/SwiftFormatPlugin
+                • Swift Programming Language `swift-format` repository: https://github.com/swiftlang/swift-format
                 • Rules reference: https://github.com/swiftlang/swift-format/blob/main/Documentation/RuleDocumentation.md
                 """
             )
