@@ -171,7 +171,7 @@ struct SwiftFormatCommandPlugin: CommandPlugin {
             Diagnostics.remark(
                 """
                 No .swift-format found in project root, using the bundled fallback configuration.
-                • Heirloom Logic SwiftFormatPlugin repository: https://github.com/heirloomlogic/SwiftFormatPlugin
+                • Heirloom Logic SwiftFormatPlugin repository: https://github.com/HeirloomLogic/SwiftFormatPlugin
                 • Swift Programming Language `swift-format` repository: https://github.com/swiftlang/swift-format
                 • Rules reference: https://github.com/swiftlang/swift-format/blob/main/Documentation/RuleDocumentation.md
                 """

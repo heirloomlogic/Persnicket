@@ -108,7 +108,7 @@ This repo ships a few shell wrappers under `bin/` for working on the plugin itse
 
 ## Links
 
-- [SwiftFormatPlugin repository](https://github.com/heirloomlogic/SwiftFormatPlugin)
+- [SwiftFormatPlugin repository](https://github.com/HeirloomLogic/SwiftFormatPlugin)
 - [`swift-format` repository](https://github.com/swiftlang/swift-format)
 - [`swift-format` rules reference](https://github.com/swiftlang/swift-format/blob/main/Documentation/RuleDocumentation.md)
 
