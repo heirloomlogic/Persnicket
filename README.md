@@ -106,6 +106,12 @@ This repo ships a few shell wrappers under `bin/` for working on the plugin itse
 
 **CI.** `.github/workflows/lint.yml` runs on every pull request and push to `main`. It regenerates the embedded literals and verifies there's no diff (drift check), then runs `bin/lint` in strict mode.
 
+## Links
+
+- [SwiftFormatPlugin repository](https://github.com/heirloomlogic/SwiftFormatPlugin)
+- [`swift-format` repository](https://github.com/swiftlang/swift-format)
+- [`swift-format` rules reference](https://github.com/swiftlang/swift-format/blob/main/Documentation/RuleDocumentation.md)
+
 ## License
 
 This project is available under the MIT License. See [LICENSE](LICENSE) for details.

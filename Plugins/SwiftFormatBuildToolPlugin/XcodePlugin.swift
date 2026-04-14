@@ -13,6 +13,14 @@ extension SwiftFormatBuildToolPlugin: XcodeBuildToolPlugin {
             pluginWorkDirectory: context.pluginWorkDirectoryURL
         )
 
+        if case .configError(let stderr) = probeSwiftFormat(
+            configPath: configPath,
+            pluginWorkDirectory: context.pluginWorkDirectoryURL
+        ) {
+            emitConfigWarning(configPath: configPath, stderr: stderr)
+            return []
+        }
+
         return [
             .prebuildCommand(
                 displayName: "swift-format lint (\(target.displayName))",
