@@ -254,13 +254,14 @@ private let fallbackConfigJSON = """
         "accessLevel": "private"
       },
       "indentConditionalCompilationBlocks": false,
+      "indentBlankLines": false,
       "indentSwitchCaseLabels": false,
       "indentation": {
         "spaces": 4
       },
       "lineBreakAroundMultilineExpressionChainComponents": false,
       "lineBreakBeforeControlFlowKeywords": false,
-      "lineBreakBeforeEachArgument": true,
+      "lineBreakBeforeEachArgument": false,
       "lineBreakBeforeEachGenericRequirement": false,
       "lineBreakBetweenDeclarationAttributes": false,
       "lineLength": 120,
@@ -272,9 +273,7 @@ private let fallbackConfigJSON = """
         ]
       },
       "prioritizeKeepingFunctionOutputTogether": true,
-      "reflowMultilineStringLiterals": {
-        "never": { }
-      },
+      "reflowMultilineStringLiterals": "onlyLinesOverLength",
       "respectsExistingLineBreaks": true,
       "rules": {
         "AllPublicDeclarationsHaveDocumentation": true,
@@ -282,7 +281,7 @@ private let fallbackConfigJSON = """
         "AlwaysUseLowerCamelCase": true,
         "AmbiguousTrailingClosureOverload": true,
         "AvoidRetroactiveConformances": true,
-        "BeginDocumentationCommentWithOneLineSummary": true,
+        "BeginDocumentationCommentWithOneLineSummary": false,
         "DoNotUseSemicolons": true,
         "DontRepeatTypeInStaticProperties": true,
         "FileScopedDeclarationPrivacy": true,
@@ -311,7 +310,7 @@ private let fallbackConfigJSON = """
         "ReplaceForEachWithForLoop": true,
         "ReturnVoidInsteadOfEmptyTuple": true,
         "TypeNamesShouldBeCapitalized": true,
-        "UseEarlyExits": false,
+        "UseEarlyExits": true,
         "UseExplicitNilCheckInConditions": true,
         "UseLetInEveryBoundCaseVariable": true,
         "UseShorthandTypeNames": true,
