@@ -28,12 +28,14 @@ fi
 stderr_file=$(mktemp)
 trap 'rm -f "$stderr_file"' EXIT
 
+exit_code=0
 # shellcheck disable=SC2086
-if $SF lint --strict --recursive --parallel --configuration .swift-format "$@" 2>"$stderr_file"; then
+$SF lint --strict --recursive --parallel --configuration .swift-format "$@" 2>"$stderr_file" || exit_code=$?
+
+if [ "$exit_code" -eq 0 ]; then
     exit 0
 fi
 
-exit_code=$?
 stderr_content=$(cat "$stderr_file")
 
 # Check if the failure is a config/toolchain mismatch rather than a real lint finding.
