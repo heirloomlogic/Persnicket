@@ -95,7 +95,7 @@ swift-format dump-configuration > .swift-format
 
 ## CI
 
-Use [`wearerequired/lint-action`](https://github.com/wearerequired/lint-action) with `swift_format_official` to surface lint violations as inline annotations in pull request diffs.
+For CI lint workflows we recommend using [`wearerequired/lint-action`](https://github.com/wearerequired/lint-action) with `swift_format_official` to surface lint violations as inline annotations in pull request diffs. Here's a sample workflow:
 
 ```yaml
 name: Lint
