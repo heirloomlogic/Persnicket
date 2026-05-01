@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Remove `bin/lint` and `bin/format` shell scripts; CI now uses `swift-format lint` directly.
+- README: restore requirements info, add CI badge, fix heading hierarchy, clarify platform scope.
 
 ### Fixed
 
@@ -19,10 +20,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fix inconsistent use of deprecated `.path` vs `.path(percentEncoded: false)` across plugins.
 - Improve preflight probe to warn (instead of silently succeeding) when it cannot execute.
 - Add pattern-match verification to `bin/regenerate-embedded-fallback`.
-
-### Changed
-
-- README: restore requirements info, add CI badge, fix heading hierarchy, clarify platform scope.
 
 ## [1.3.0] - 2026-04-15
 
