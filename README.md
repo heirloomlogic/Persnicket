@@ -1,8 +1,21 @@
-# SwiftFormatPlugin
+<p align="center">
+  <img src="Images/SwiftFormatPlugin-logo@2x.png" alt="SwiftFormatPlugin" width="256">
+</p>
 
-A lightweight SPM plugin that lints and formats Swift source files using the Swift 6 toolchain's `swift-format` command.
+<h1 align="center">SwiftFormatPlugin</h1>
 
-Works on **macOS**, **Linux**, and **Windows**.
+<p align="center">
+A lightweight SPM plugin that lints and formats Swift source files. Its only dependency is the Swift toolchain's built-in <code>swift-format</code> binary.
+</p>
+
+<p align="center">
+
+[![Swift 6.0+](https://img.shields.io/badge/Swift-6.0+-orange.svg)](https://swift.org)
+[![Platform](https://img.shields.io/badge/Platform-macOS%20|%20Linux-blue.svg)](https://swift.org)
+[![CI](https://github.com/HeirloomLogic/SwiftFormatPlugin/actions/workflows/lint.yml/badge.svg)](https://github.com/HeirloomLogic/SwiftFormatPlugin/actions/workflows/lint.yml)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+</p>
 
 ## Plugins
 
@@ -17,7 +30,9 @@ Both plugins work with Swift Package Manager. On macOS, Xcode project integratio
 
 - **Swift 6.0+** toolchain that includes `swift-format`
 - **macOS**: Xcode 16+ (the plugin invokes `swift-format` via `xcrun`)
-- **Linux / Windows**: `swift-format` must be on your `$PATH`
+- **Linux**: `swift-format` must be on your `$PATH`
+
+The plugin can lint and format targets for any Apple platform (iOS, tvOS, watchOS, visionOS) — it runs on the host machine during the build.
 
 ## Installation
 
@@ -28,6 +43,8 @@ dependencies: [
     .package(url: "https://github.com/HeirloomLogic/SwiftFormatPlugin", from: "1.3.0"),
 ]
 ```
+
+Or in Xcode: **File → Add Package Dependencies** and enter the repository URL.
 
 ### Build Tool Plugin (automatic linting)
 
@@ -72,7 +89,7 @@ To use your own configuration, create a `.swift-format` file in the root of your
 # macOS
 xcrun swift-format dump-configuration > .swift-format
 
-# Linux / Windows
+# Linux
 swift-format dump-configuration > .swift-format
 ```
 
@@ -84,7 +101,7 @@ The `swift-format` configuration format has been observed to ship breaking chang
 
 ## How It Works
 
-On **macOS**, the plugins invoke `swift-format` via `/usr/bin/xcrun`, which resolves to the binary in your active Xcode toolchain. On **Linux** and **Windows**, the plugins invoke `swift-format` directly from your `$PATH`. This means:
+On **macOS**, the plugins invoke `swift-format` via `/usr/bin/xcrun`, which resolves to the binary in your active Xcode toolchain. On **Linux**, the plugins invoke `swift-format` directly from your `$PATH`. This means:
 
 - **Zero compile-time cost** — no `swift-syntax` dependency tree to build.
 - **Always in sync** with your toolchain's Swift version.

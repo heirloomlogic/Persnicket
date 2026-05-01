@@ -8,11 +8,17 @@ struct SwiftFormatBuildToolPlugin: BuildToolPlugin {
         target: Target
     ) throws -> [Command] {
         guard let sourceModule = target as? SourceModuleTarget else {
+            Diagnostics.remark(
+                "Skipping target \"\(target.name)\" because it is not a source module."
+            )
             return []
         }
 
         let sourceFiles = sourceModule.sourceFiles(withSuffix: ".swift")
         guard !sourceFiles.isEmpty else {
+            Diagnostics.remark(
+                "Skipping target \"\(target.name)\" because it has no Swift source files."
+            )
             return []
         }
 
@@ -35,7 +41,7 @@ struct SwiftFormatBuildToolPlugin: BuildToolPlugin {
             "--configuration", configPath,
         ]
         for file in sourceFiles {
-            arguments.append(file.url.path)
+            arguments.append(file.url.path(percentEncoded: false))
         }
 
         return [
@@ -51,7 +57,7 @@ struct SwiftFormatBuildToolPlugin: BuildToolPlugin {
     /// Returns the executable URL used to invoke `swift-format`.
     ///
     /// On macOS this is `xcrun` (resolves from the active Xcode toolchain).
-    /// On Linux / Windows the binary is expected on `$PATH`.
+    /// On Linux the binary is expected on `$PATH`.
     private func swiftFormatExecutable() -> URL {
         #if os(macOS)
         URL(fileURLWithPath: "/usr/bin/xcrun")
@@ -84,7 +90,8 @@ struct SwiftFormatBuildToolPlugin: BuildToolPlugin {
                 No .swift-format found in project root, using the bundled fallback configuration.
                 • Heirloom Logic SwiftFormatPlugin repository: https://github.com/HeirloomLogic/SwiftFormatPlugin
                 • Swift Programming Language `swift-format` repository: https://github.com/swiftlang/swift-format
-                • Rules reference: https://github.com/swiftlang/swift-format/blob/main/Documentation/RuleDocumentation.md
+                • Rules reference: \
+                https://github.com/swiftlang/swift-format/blob/main/Documentation/RuleDocumentation.md
                 """
             )
             resolvedPath = fallbackURL.path
@@ -136,6 +143,9 @@ struct SwiftFormatBuildToolPlugin: BuildToolPlugin {
         do {
             try "// probe\n".write(to: probeFile, atomically: true, encoding: .utf8)
         } catch {
+            Diagnostics.remark(
+                "swift-format preflight probe skipped: could not write probe file (\(error.localizedDescription))."
+            )
             return .ok
         }
 
@@ -161,11 +171,20 @@ struct SwiftFormatBuildToolPlugin: BuildToolPlugin {
             if lower.contains("unable to read configuration")
                 || lower.contains("invalid configuration")
                 || lower.contains("unknown argument")
+                || lower.contains("unable to find utility")
             {
                 return .configError(stderr: stderr)
             }
+            Diagnostics.remark(
+                "swift-format preflight probe exited with status \(process.terminationStatus) "
+                    + "for an unrecognized reason. Linting will proceed — if it fails, check the "
+                    + "stderr output above."
+            )
             return .ok
         } catch {
+            Diagnostics.remark(
+                "swift-format preflight probe skipped: could not launch process (\(error.localizedDescription))."
+            )
             return .ok
         }
     }

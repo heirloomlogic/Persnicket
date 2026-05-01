@@ -6,7 +6,7 @@ The plugin supports Swift 6.0+ / Xcode 16+ for end users. To contribute, you nee
 
 - Swift 6.3+ toolchain with `swift-format`
 - macOS: Xcode 26.3+
-- Linux / Windows: `swift-format` on your `$PATH`
+- Linux: `swift-format` on your `$PATH`
 
 ## Development workflow
 
@@ -55,4 +55,4 @@ Use the [issue templates](https://github.com/HeirloomLogic/SwiftFormatPlugin/iss
 
 ## Code of Conduct
 
-This project follows the [Contributor Covenant v2.1](CODE_OF_CONDUCT.md). Please read it before participating.
+This project follows the [Contributor Covenant v2.1](.github/CODE_OF_CONDUCT.md). Please read it before participating.

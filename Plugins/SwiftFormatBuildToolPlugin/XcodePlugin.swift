@@ -30,7 +30,7 @@ extension SwiftFormatBuildToolPlugin: XcodeBuildToolPlugin {
                     "--parallel",
                     "--configuration", configPath,
                     "--recursive",
-                    context.xcodeProject.directoryURL.path,
+                    context.xcodeProject.directoryURL.path(percentEncoded: false),
                 ],
                 outputFilesDirectory: context.pluginWorkDirectoryURL
             )

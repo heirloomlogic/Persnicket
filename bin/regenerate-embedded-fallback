@@ -49,4 +49,11 @@ rewrite() {
 rewrite "$FILE_A"
 rewrite "$FILE_B"
 
+for f in "$FILE_A" "$FILE_B"; do
+    if ! grep -q '^private let fallbackConfigJSON = """$' "$f"; then
+        echo "error: marker line not found in $f — the fallbackConfigJSON literal may not have been rewritten" >&2
+        exit 1
+    fi
+done
+
 echo "ok: regenerated fallbackConfigJSON literal in both plugin files from $CONFIG"

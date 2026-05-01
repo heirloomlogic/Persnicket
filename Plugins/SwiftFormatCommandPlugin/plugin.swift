@@ -95,7 +95,7 @@ struct SwiftFormatCommandPlugin: CommandPlugin {
                 return
             }
 
-            Diagnostics.error(
+            let message =
                 """
                 swift-format format failed for target "\(targetName)" \
                 (status \(process.terminationStatus)).
@@ -103,8 +103,8 @@ struct SwiftFormatCommandPlugin: CommandPlugin {
                 \(stderr.isEmpty ? "(empty)" : stderr.trimmingCharacters(in: .whitespacesAndNewlines))
                 ---------------------------
                 """
-            )
-            return
+            Diagnostics.error(message)
+            throw PluginError(message: message)
         }
 
         Diagnostics.remark("Formatted Swift source files in target \"\(targetName)\".")
@@ -140,7 +140,7 @@ struct SwiftFormatCommandPlugin: CommandPlugin {
     /// Returns the executable URL used to invoke `swift-format`.
     ///
     /// On macOS this is `xcrun` (resolves from the active Xcode toolchain).
-    /// On Linux / Windows the binary is expected on `$PATH`.
+    /// On Linux the binary is expected on `$PATH`.
     private func swiftFormatExecutable() -> URL {
         #if os(macOS)
         URL(fileURLWithPath: "/usr/bin/xcrun")
@@ -173,7 +173,8 @@ struct SwiftFormatCommandPlugin: CommandPlugin {
                 No .swift-format found in project root, using the bundled fallback configuration.
                 • Heirloom Logic SwiftFormatPlugin repository: https://github.com/HeirloomLogic/SwiftFormatPlugin
                 • Swift Programming Language `swift-format` repository: https://github.com/swiftlang/swift-format
-                • Rules reference: https://github.com/swiftlang/swift-format/blob/main/Documentation/RuleDocumentation.md
+                • Rules reference: \
+                https://github.com/swiftlang/swift-format/blob/main/Documentation/RuleDocumentation.md
                 """
             )
             resolvedPath = fallbackURL.path
@@ -210,6 +211,11 @@ struct SwiftFormatCommandPlugin: CommandPlugin {
             )
         }
     }
+}
+
+struct PluginError: Error, CustomStringConvertible {
+    let message: String
+    var description: String { message }
 }
 
 enum ConfigValidation {

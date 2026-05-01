@@ -5,7 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.3.0] - 2026-04-14
+## [Unreleased]
+
+### Fixed
+
+- Fix `bin/lint` always exiting 0 for real lint failures (POSIX `$?` after `if` is always 0).
+- Fix command plugin exiting 0 when `swift-format` fails (now throws so CI catches failures).
+- Fix Xcode command plugin dropping stderr content from non-config error messages.
+- Fix broken `CODE_OF_CONDUCT.md` link in CONTRIBUTING.md after file was moved to `.github/`.
+- Fix inconsistent use of deprecated `.path` vs `.path(percentEncoded: false)` across plugins.
+- Improve preflight probe to warn (instead of silently succeeding) when it cannot execute.
+- Add pattern-match verification to `bin/regenerate-embedded-fallback`.
+
+### Changed
+
+- README: restore requirements info, add CI badge, fix heading hierarchy, clarify platform scope.
+
+## [1.3.0] - 2026-04-15
 
 ### Changed
 
@@ -29,7 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Use `path` instead of `absoluteString` for file URLs in `SwiftFormatCommandPlugin`, fixing path encoding issues.
 
-## [1.0.0] - 2026-02-09
+## [1.0.0] - 2026-02-08
 
 ### Added
 
@@ -38,6 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Xcode project integration for both plugins (macOS).
 - Embedded fallback configuration for projects without a `.swift-format` file.
 
+[Unreleased]: https://github.com/HeirloomLogic/SwiftFormatPlugin/compare/1.3.0...HEAD
 [1.3.0]: https://github.com/HeirloomLogic/SwiftFormatPlugin/compare/1.2.0...1.3.0
 [1.2.0]: https://github.com/HeirloomLogic/SwiftFormatPlugin/compare/1.1.0...1.2.0
 [1.1.0]: https://github.com/HeirloomLogic/SwiftFormatPlugin/compare/1.0.0...1.1.0

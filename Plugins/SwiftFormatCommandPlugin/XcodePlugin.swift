@@ -21,7 +21,7 @@ extension SwiftFormatCommandPlugin: XcodeCommandPlugin {
             "--parallel",
             "--configuration", configPath,
             "--recursive",
-            context.xcodeProject.directoryURL.path,
+            context.xcodeProject.directoryURL.path(percentEncoded: false),
         ]
 
         let stderrPipe = Pipe()
@@ -63,12 +63,17 @@ extension SwiftFormatCommandPlugin: XcodeCommandPlugin {
                 return
             }
 
-            Diagnostics.error(
-                "swift-format format failed for project "
-                    + "\"\(context.xcodeProject.displayName)\" "
-                    + "(status \(process.terminationStatus))."
-            )
-            return
+            let message =
+                """
+                swift-format format failed for project \
+                "\(context.xcodeProject.displayName)" \
+                (status \(process.terminationStatus)).
+                --- swift-format stderr ---
+                \(stderr.isEmpty ? "(empty)" : stderr.trimmingCharacters(in: .whitespacesAndNewlines))
+                ---------------------------
+                """
+            Diagnostics.error(message)
+            throw PluginError(message: message)
         }
 
         Diagnostics.remark(
