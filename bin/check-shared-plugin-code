@@ -1,0 +1,43 @@
+#!/usr/bin/env sh
+# Verifies that the shared plugin infrastructure section is byte-identical
+# across both plugin targets.
+#
+# Each plugin.swift contains a MARK divider; everything from that line through
+# end-of-file must match exactly. Edit one copy, replicate to the other,
+# and this script (run in CI) catches drift.
+set -eu
+cd "$(dirname "$0")/.."
+
+MARKER="    // MARK: - Shared Plugin Infrastructure (must be identical across all plugin targets)"
+
+FILE_A="Plugins/SwiftFormatBuildToolPlugin/plugin.swift"
+FILE_B="Plugins/SwiftFormatCommandPlugin/plugin.swift"
+
+for f in "$FILE_A" "$FILE_B"; do
+    [ -f "$f" ] || { echo "error: $f not found" >&2; exit 1; }
+done
+
+extract_shared() {
+    awk -v marker="$MARKER" '
+        found { print; next }
+        $0 == marker { found = 1; print }
+    ' "$1"
+}
+
+tmp_a=$(mktemp)
+tmp_b=$(mktemp)
+trap 'rm -f "$tmp_a" "$tmp_b"' EXIT
+
+extract_shared "$FILE_A" > "$tmp_a"
+extract_shared "$FILE_B" > "$tmp_b"
+
+for f in "$tmp_a" "$tmp_b"; do
+    [ -s "$f" ] || { echo "error: MARK divider not found in one of the plugin files" >&2; exit 1; }
+done
+
+if diff -u --label "$FILE_A" --label "$FILE_B" "$tmp_a" "$tmp_b" >&2; then
+    echo "ok: shared plugin infrastructure is identical across both plugins"
+else
+    echo "error: shared section differs between BuildTool and Command plugins" >&2
+    exit 1
+fi

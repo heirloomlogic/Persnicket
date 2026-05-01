@@ -54,6 +54,8 @@ struct SwiftFormatBuildToolPlugin: BuildToolPlugin {
         ]
     }
 
+    // MARK: - Shared Plugin Infrastructure (must be identical across all plugin targets)
+
     /// Returns the executable URL used to invoke `swift-format`.
     ///
     /// On macOS this is `xcrun` (resolves from the active Xcode toolchain).
@@ -66,7 +68,7 @@ struct SwiftFormatBuildToolPlugin: BuildToolPlugin {
         #endif
     }
 
-    // MARK: - Configuration Resolution
+    // MARK: Configuration Resolution
 
     /// Looks for `.swift-format` in the downstream project root.
     ///
@@ -132,7 +134,34 @@ struct SwiftFormatBuildToolPlugin: BuildToolPlugin {
         }
     }
 
-    // MARK: - Preflight Probe
+    /// Best-effort probe of the active swift-format's `--version` output.
+    ///
+    /// Surfaces the toolchain version that would otherwise be invisible in logs.
+    private func logSwiftFormatVersion() {
+        let process = Process()
+        process.executableURL = swiftFormatExecutable()
+        process.arguments = ["swift-format", "--version"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        do {
+            try process.run()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            let output =
+                String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            Diagnostics.remark(
+                "swift-format --version: \(output.isEmpty ? "(no output)" : output)"
+            )
+        } catch {
+            Diagnostics.remark(
+                "swift-format --version probe failed: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    // MARK: Preflight Probe
 
     /// Runs swift-format against a trivial file to verify the config is parseable.
     ///
@@ -144,14 +173,23 @@ struct SwiftFormatBuildToolPlugin: BuildToolPlugin {
             try "// probe\n".write(to: probeFile, atomically: true, encoding: .utf8)
         } catch {
             Diagnostics.remark(
-                "swift-format preflight probe skipped: could not write probe file (\(error.localizedDescription))."
+                """
+                swift-format preflight probe skipped: could not write probe \
+                file (\(error.localizedDescription)).
+                """
             )
             return .ok
         }
 
         let process = Process()
         process.executableURL = swiftFormatExecutable()
-        process.arguments = ["swift-format", "lint", "--configuration", configPath, probeFile.path]
+        process.arguments = [
+            "swift-format",
+            "lint",
+            "--configuration",
+            configPath,
+            probeFile.path,
+        ]
 
         let stderrPipe = Pipe()
         process.standardOutput = FileHandle.nullDevice
@@ -176,14 +214,19 @@ struct SwiftFormatBuildToolPlugin: BuildToolPlugin {
                 return .configError(stderr: stderr)
             }
             Diagnostics.remark(
-                "swift-format preflight probe exited with status \(process.terminationStatus) "
-                    + "for an unrecognized reason. Linting will proceed — if it fails, check the "
-                    + "stderr output above."
+                """
+                swift-format preflight probe exited with status \(process.terminationStatus) \
+                for an unrecognized reason. Linting will proceed — if it fails, check the \
+                stderr output above.
+                """
             )
             return .ok
         } catch {
             Diagnostics.remark(
-                "swift-format preflight probe skipped: could not launch process (\(error.localizedDescription))."
+                """
+                swift-format preflight probe skipped: could not launch \
+                process (\(error.localizedDescription)).
+                """
             )
             return .ok
         }
@@ -218,6 +261,11 @@ struct SwiftFormatBuildToolPlugin: BuildToolPlugin {
 enum ProbeResult {
     case ok
     case configError(stderr: String)
+}
+
+struct PluginError: Error, CustomStringConvertible {
+    let message: String
+    var description: String { message }
 }
 
 enum ConfigValidation {

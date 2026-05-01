@@ -8,7 +8,7 @@ on:
 jobs:
   swift-format-lint:
     name: swift-format (strict)
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
 
@@ -23,5 +23,8 @@ jobs:
           ./bin/regenerate-embedded-fallback
           git diff --exit-code -- Plugins/SwiftFormatBuildToolPlugin/plugin.swift Plugins/SwiftFormatCommandPlugin/plugin.swift
 
+      - name: Verify shared plugin infrastructure is identical
+        run: ./bin/check-shared-plugin-code
+
       - name: Lint (strict)
-        run: ./bin/lint
+        run: xcrun swift-format lint --strict --parallel --recursive --configuration .swift-format Plugins/
