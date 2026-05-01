@@ -10,13 +10,11 @@ The plugin supports Swift 6.0+ / Xcode 16+ for end users. To contribute, you nee
 
 ## Development workflow
 
-This repo includes shell scripts under `bin/` for working on the plugin:
+This repo includes a shell script under `bin/` for working on the plugin:
 
 | Script | Purpose |
 |---|---|
-| `bin/format` | Reformats the plugin's own sources via `SwiftFormatCommandPlugin`. |
-| `bin/lint` | Runs `swift-format lint --strict` directly (fast, skips SwiftPM). |
-| `bin/regenerate-embedded-fallback` | Rewrites the embedded `fallbackConfigJSON` literals in both plugin source files from `.swift-format`. |
+| `bin/regenerate-embedded-fallback` | Rewrites the embedded `fallbackConfigJSON` literals in all plugin source files from `.swift-format`. |
 
 ### The `.swift-format` single-source-of-truth rule
 
@@ -34,7 +32,7 @@ CI will reject your PR if the embedded literals drift from `.swift-format`.
 
 1. Fork the repository and create a branch from `main`.
 2. Make your changes.
-3. Run `bin/lint` and confirm it passes.
+3. Run `xcrun swift-format lint --strict --parallel --recursive Plugins/` and confirm it passes.
 4. If you changed `.swift-format` or anything related to the fallback config, run `bin/regenerate-embedded-fallback`.
 5. Open a pull request against `main`.
 
@@ -45,7 +43,7 @@ Keep PRs focused — one logical change per PR.
 The GitHub Actions workflow (`.github/workflows/lint.yml`) runs on every PR and push to `main`:
 
 1. Regenerates the embedded fallback literals and verifies there is no diff.
-2. Runs `bin/lint` in strict mode.
+2. Runs `swift-format lint --strict` on the plugin source.
 
 Both checks must pass before merge.
 

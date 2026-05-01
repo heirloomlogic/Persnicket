@@ -7,9 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Remove `bin/lint` and `bin/format` shell scripts; CI now uses `swift-format lint` directly.
+
 ### Fixed
 
-- Fix `bin/lint` always exiting 0 for real lint failures (POSIX `$?` after `if` is always 0).
 - Fix command plugin exiting 0 when `swift-format` fails (now throws so CI catches failures).
 - Fix Xcode command plugin dropping stderr content from non-config error messages.
 - Fix broken `CODE_OF_CONDUCT.md` link in CONTRIBUTING.md after file was moved to `.github/`.
@@ -37,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Shared `.swift-format` configuration file as the single source of truth for the default config.
 - CI workflow (`.github/workflows/lint.yml`) with embedded-fallback drift check and strict lint.
-- Development scripts: `bin/format`, `bin/lint`, `bin/regenerate-embedded-fallback`.
+- Development script: `bin/regenerate-embedded-fallback`.
 
 ## [1.1.0] - 2026-02-19
 

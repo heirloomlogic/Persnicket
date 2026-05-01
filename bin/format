@@ -1,6 +1,0 @@
-#!/usr/bin/env sh
-# Reformat all Swift sources in this package in place via SwiftFormatCommandPlugin.
-# Forwards extra args to `swift package plugin` (e.g. --verbose).
-set -eu
-cd "$(dirname "$0")/.."
-exec swift package plugin --allow-writing-to-package-directory format-source-code "$@"

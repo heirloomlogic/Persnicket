@@ -110,32 +110,7 @@ struct SwiftFormatCommandPlugin: CommandPlugin {
         Diagnostics.remark("Formatted Swift source files in target \"\(targetName)\".")
     }
 
-    /// Best-effort probe of the active swift-format's `--version` output.
-    ///
-    /// Surfaces the toolchain version that would otherwise be invisible in logs.
-    private func logSwiftFormatVersion() {
-        let process = Process()
-        process.executableURL = swiftFormatExecutable()
-        process.arguments = ["swift-format", "--version"]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-        do {
-            try process.run()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-            let output =
-                String(data: data, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            Diagnostics.remark(
-                "swift-format --version: \(output.isEmpty ? "(no output)" : output)"
-            )
-        } catch {
-            Diagnostics.remark(
-                "swift-format --version probe failed: \(error.localizedDescription)"
-            )
-        }
-    }
+    // MARK: - Shared Plugin Infrastructure (must be identical across all plugin targets)
 
     /// Returns the executable URL used to invoke `swift-format`.
     ///
@@ -149,7 +124,7 @@ struct SwiftFormatCommandPlugin: CommandPlugin {
         #endif
     }
 
-    // MARK: - Configuration Resolution
+    // MARK: Configuration Resolution
 
     /// Looks for `.swift-format` in the downstream project root.
     ///
@@ -184,6 +159,9 @@ struct SwiftFormatCommandPlugin: CommandPlugin {
         return resolvedPath
     }
 
+    /// Emits an up-front summary of the config/toolchain so that when swift-format
+    /// fails downstream with its cryptic `<unknown>: error: Unable to read configuration`,
+    /// the context needed to diagnose the failure is already in the log above it.
     private func emitPreflightDiagnostics(configPath: String) {
         switch validateConfig(at: configPath) {
         case .ok(let version):
@@ -211,6 +189,134 @@ struct SwiftFormatCommandPlugin: CommandPlugin {
             )
         }
     }
+
+    /// Best-effort probe of the active swift-format's `--version` output.
+    ///
+    /// Surfaces the toolchain version that would otherwise be invisible in logs.
+    private func logSwiftFormatVersion() {
+        let process = Process()
+        process.executableURL = swiftFormatExecutable()
+        process.arguments = ["swift-format", "--version"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        do {
+            try process.run()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            let output =
+                String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            Diagnostics.remark(
+                "swift-format --version: \(output.isEmpty ? "(no output)" : output)"
+            )
+        } catch {
+            Diagnostics.remark(
+                "swift-format --version probe failed: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    // MARK: Preflight Probe
+
+    /// Runs swift-format against a trivial file to verify the config is parseable.
+    ///
+    /// This catches config/toolchain mismatches before SPM's prebuild command
+    /// runs — where a non-zero exit would fail the build.
+    func probeSwiftFormat(configPath: String, pluginWorkDirectory: URL) -> ProbeResult {
+        let probeFile = pluginWorkDirectory.appendingPathComponent("_swift_format_probe.swift")
+        do {
+            try "// probe\n".write(to: probeFile, atomically: true, encoding: .utf8)
+        } catch {
+            Diagnostics.remark(
+                """
+                swift-format preflight probe skipped: could not write probe \
+                file (\(error.localizedDescription)).
+                """
+            )
+            return .ok
+        }
+
+        let process = Process()
+        process.executableURL = swiftFormatExecutable()
+        process.arguments = [
+            "swift-format",
+            "lint",
+            "--configuration",
+            configPath,
+            probeFile.path,
+        ]
+
+        let stderrPipe = Pipe()
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = stderrPipe
+
+        do {
+            try process.run()
+            let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+
+            guard process.terminationStatus != EXIT_SUCCESS else {
+                return .ok
+            }
+
+            let stderr = String(data: stderrData, encoding: .utf8) ?? ""
+            let lower = stderr.lowercased()
+            if lower.contains("unable to read configuration")
+                || lower.contains("invalid configuration")
+                || lower.contains("unknown argument")
+                || lower.contains("unable to find utility")
+            {
+                return .configError(stderr: stderr)
+            }
+            Diagnostics.remark(
+                """
+                swift-format preflight probe exited with status \(process.terminationStatus) \
+                for an unrecognized reason. Linting will proceed — if it fails, check the \
+                stderr output above.
+                """
+            )
+            return .ok
+        } catch {
+            Diagnostics.remark(
+                """
+                swift-format preflight probe skipped: could not launch \
+                process (\(error.localizedDescription)).
+                """
+            )
+            return .ok
+        }
+    }
+
+    /// Emits a detailed warning when the preflight probe detects a config/toolchain
+    /// mismatch, and explains that linting has been skipped.
+    func emitConfigWarning(configPath: String, stderr: String) {
+        var version: Int?
+        if case .ok(let v) = validateConfig(at: configPath) { version = v }
+        let versionString = version.map(String.init) ?? "unknown"
+        Diagnostics.warning(
+            """
+            swift-format cannot parse the configuration — linting skipped.
+
+            The active toolchain's swift-format is incompatible with the config schema. \
+            This is a CI/toolchain setup issue, not a source code problem.
+
+            --- swift-format stderr ---
+            \(stderr.trimmingCharacters(in: .whitespacesAndNewlines))
+            ---------------------------
+
+            • config: \(configPath)  (version: \(versionString))
+            • executable: \(swiftFormatExecutable().path) swift-format
+            • Fix: upgrade the toolchain to match the config schema, or pin \
+            the config to an older schema compatible with the active toolchain.
+            """
+        )
+    }
+}
+
+enum ProbeResult {
+    case ok
+    case configError(stderr: String)
 }
 
 struct PluginError: Error, CustomStringConvertible {

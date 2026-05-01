@@ -93,6 +93,74 @@ xcrun swift-format dump-configuration > .swift-format
 swift-format dump-configuration > .swift-format
 ```
 
+## CI
+
+Use [`wearerequired/lint-action`](https://github.com/wearerequired/lint-action) with `swift_format_official` to surface lint violations as inline annotations in pull request diffs. Two modes: lenient (warnings, check passes) and strict (errors, check fails).
+
+### Lenient — warnings only
+
+Violations appear as inline warnings on changed files. The check passes regardless.
+
+```yaml
+name: Lint
+
+on:
+  pull_request:
+
+permissions:
+  checks: write
+  contents: read
+
+jobs:
+  swift-format-lint:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: wearerequired/lint-action@v2
+        with:
+          swift_format_official: true
+```
+
+### Strict — break the build
+
+Pass `--strict` to fail the check when violations are found. With branch protection enabled, this blocks merges.
+
+```yaml
+name: Lint
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  checks: write
+  contents: read
+
+jobs:
+  swift-format-lint:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: wearerequired/lint-action@v2
+        with:
+          swift_format_official: true
+          swift_format_official_args: "--strict"
+```
+
+### Using the plugin's default configuration
+
+If your project does not include its own `.swift-format`, add a step before the lint action to resolve the plugin's curated default:
+
+```yaml
+      - name: Resolve swift-format config
+        run: |
+          if [ ! -f .swift-format ]; then
+            swift package resolve
+            cp .build/checkouts/SwiftFormatPlugin/.swift-format .swift-format
+          fi
+```
+
 ## Toolchain Compatibility
 
 Match the Swift toolchain on your CI runner to the one on your development machine. Major.minor must align; patch should not matter.
@@ -109,19 +177,17 @@ On **macOS**, the plugins invoke `swift-format` via `/usr/bin/xcrun`, which reso
 
 ## Development
 
-This repo ships a few shell wrappers under `bin/` for working on the plugin itself:
+This repo ships a shell script under `bin/` for working on the plugin itself:
 
 | Script | Purpose |
 |---|---|
-| `bin/format` | Runs `SwiftFormatCommandPlugin` on this package to format its own sources. |
-| `bin/lint` | Fast-path lint via `swift-format` directly (skips SwiftPM). Runs in `--strict` mode. |
-| `bin/regenerate-embedded-fallback` | Rewrites the embedded `fallbackConfigJSON` literal in both plugin source files from the canonical `.swift-format` at the repo root. |
+| `bin/regenerate-embedded-fallback` | Rewrites the embedded `fallbackConfigJSON` literal in all plugin source files from the canonical `.swift-format` at the repo root. |
 
 **Editing the default config.** The `.swift-format` file at the repo root is the single source of truth for this plugin's default configuration. If you change it, run `bin/regenerate-embedded-fallback` before committing — the script rewrites the `private let fallbackConfigJSON = """..."""` block in both plugin source files to match.
 
-**Why the duplication exists.** SwiftPM plugin targets cannot share Swift source across targets and cannot carry resources (no `resources:` parameter on `.plugin(...)`, no `PluginContext` API to locate the plugin's own on-disk files), so both `SwiftFormatBuildToolPlugin/plugin.swift` and `SwiftFormatCommandPlugin/plugin.swift` must embed the fallback as a literal. The generator + CI drift check turns this structural duplication into a managed one: you only ever edit `.swift-format`, and CI fails if the embedded literals are out of sync.
+**Why the duplication exists.** SwiftPM plugin targets cannot share Swift source across targets and cannot carry resources (no `resources:` parameter on `.plugin(...)`, no `PluginContext` API to locate the plugin's own on-disk files), so both plugin source files must embed the fallback as a literal. The generator + CI drift check turns this structural duplication into a managed one: you only ever edit `.swift-format`, and CI fails if the embedded literals are out of sync.
 
-**CI.** `.github/workflows/lint.yml` runs on every pull request and push to `main`. It regenerates the embedded literals and verifies there's no diff (drift check), then runs `bin/lint` in strict mode.
+**CI.** `.github/workflows/lint.yml` runs on every pull request and push to `main`. It regenerates the embedded literals and verifies there's no diff (drift check), then runs `swift-format lint` in strict mode on the plugin's own source.
 
 ## Links
 
