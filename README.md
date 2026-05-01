@@ -113,7 +113,7 @@ permissions:
 
 jobs:
   swift-format-lint:
-    runs-on: macos-15
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: wearerequired/lint-action@v2
@@ -139,7 +139,7 @@ permissions:
 
 jobs:
   swift-format-lint:
-    runs-on: macos-15
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: wearerequired/lint-action@v2
