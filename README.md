@@ -95,35 +95,7 @@ swift-format dump-configuration > .swift-format
 
 ## CI
 
-Use [`wearerequired/lint-action`](https://github.com/wearerequired/lint-action) with `swift_format_official` to surface lint violations as inline annotations in pull request diffs. The two modes are lenient (warnings, check passes) and strict (errors, check fails).
-
-### Lenient — warnings only
-
-Violations appear as inline warnings on changed files. The check passes regardless.
-
-```yaml
-name: Lint
-
-on:
-  pull_request:
-
-permissions:
-  checks: write
-  contents: read
-
-jobs:
-  swift-format-lint:
-    runs-on: macos-26
-    steps:
-      - uses: actions/checkout@v4
-      - uses: wearerequired/lint-action@v2
-        with:
-          swift_format_official: true
-```
-
-### Strict — break the build
-
-Pass `--strict` to fail the check when violations are found. With branch protection enabled, this blocks merges.
+For CI lint workflows we recommend using [`wearerequired/lint-action`](https://github.com/wearerequired/lint-action) with `swift_format_official` to surface lint violations as inline annotations in pull request diffs. Here's a sample workflow:
 
 ```yaml
 name: Lint
@@ -142,23 +114,23 @@ jobs:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
-      - uses: wearerequired/lint-action@v2
-        with:
-          swift_format_official: true
-          swift_format_official_args: "--strict"
-```
 
-### Using the plugin's default configuration
+      - name: Link swift-format from Xcode toolchain
+        run: ln -s "$(xcrun --find swift-format)" /usr/local/bin/swift-format
 
-If your project does not include its own `.swift-format`, add a step before the lint action to resolve the plugin's built-in default:
-
-```yaml
+      # Optional — only needed if your project doesn't include its own .swift-format
       - name: Resolve swift-format config
         run: |
           if [ ! -f .swift-format ]; then
             swift package resolve
             cp .build/checkouts/SwiftFormatPlugin/.swift-format .swift-format
           fi
+
+      - uses: wearerequired/lint-action@v2
+        with:
+          swift_format_official: true
+          # Optional — omit for lenient mode (warnings only, check still passes)
+          swift_format_official_args: "--strict"
 ```
 
 ## Toolchain Compatibility
