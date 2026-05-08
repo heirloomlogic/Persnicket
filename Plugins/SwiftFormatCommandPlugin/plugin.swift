@@ -7,12 +7,15 @@ struct SwiftFormatCommandPlugin: CommandPlugin {
         context: PluginContext,
         arguments: [String]
     ) throws {
+        let launcher = swiftFormatLauncher()
+
         let configPath = try resolveConfiguration(
+            launcher: launcher,
             projectRoot: context.package.directoryURL,
             pluginWorkDirectory: context.pluginWorkDirectoryURL
         )
 
-        logSwiftFormatVersion()
+        logSwiftFormatVersion(launcher: launcher)
 
         for target in context.package.targets {
             guard let sourceModule = target as? SourceModuleTarget else {
@@ -31,6 +34,7 @@ struct SwiftFormatCommandPlugin: CommandPlugin {
             }
 
             try format(
+                launcher: launcher,
                 sourceFiles: sourceFiles,
                 targetName: target.name,
                 configPath: configPath
@@ -38,13 +42,19 @@ struct SwiftFormatCommandPlugin: CommandPlugin {
         }
     }
 
-    func format(sourceFiles: FileList, targetName: String, configPath: String) throws {
-        var arguments: [String] = [
-            "swift-format", "format",
-            "--in-place",
-            "--parallel",
-            "--configuration", configPath,
-        ]
+    func format(
+        launcher: SwiftFormatLauncher,
+        sourceFiles: FileList,
+        targetName: String,
+        configPath: String
+    ) throws {
+        var arguments =
+            launcher.leadingArguments + [
+                "format",
+                "--in-place",
+                "--parallel",
+                "--configuration", configPath,
+            ]
 
         let swiftFiles = sourceFiles.filter {
             $0.type == .source && $0.url.pathExtension == "swift"
@@ -52,7 +62,7 @@ struct SwiftFormatCommandPlugin: CommandPlugin {
         arguments += swiftFiles.map { $0.url.path(percentEncoded: false) }
 
         let process = Process()
-        process.executableURL = swiftFormatExecutable()
+        process.executableURL = launcher.executable
         process.arguments = arguments
 
         let stderrPipe = Pipe()
@@ -87,7 +97,7 @@ struct SwiftFormatCommandPlugin: CommandPlugin {
                     ---------------------------
 
                     • config: \(configPath)  (version: \(versionString))
-                    • executable: \(swiftFormatExecutable().path) swift-format
+                    • executable: \(launcher.displayCommand)
                     • Fix: upgrade the toolchain to match the config schema, or pin \
                     the config to an older schema compatible with the active toolchain.
                     """
@@ -112,17 +122,105 @@ struct SwiftFormatCommandPlugin: CommandPlugin {
 
     // MARK: - Shared Plugin Infrastructure (must be identical across all plugin targets)
 
-    /// Returns the executable URL used to invoke `swift-format`.
+    /// Resolves how to invoke `swift-format` on the current platform.
     ///
-    /// On macOS this is `xcrun` (resolves from the active Xcode toolchain).
-    /// On Linux the binary is expected on `$PATH`.
-    private func swiftFormatExecutable() -> URL {
+    /// **macOS:** dispatches through `/usr/bin/xcrun` so the binary tracks the active
+    /// Xcode toolchain.
+    ///
+    /// **Linux:** auto-discovers the toolchain's `swift-format` so downstream consumers
+    /// don't have to symlink it into `/usr/local/bin` from CI. See `resolveLinuxSwiftFormatPath`
+    /// for the search order.
+    ///
+    /// If Linux discovery fails, emits a `Diagnostics.error` listing the searched paths
+    /// and falls back to `/usr/bin/env swift-format` — which still fails at launch, but
+    /// the error above the failure now explains why.
+    private func swiftFormatLauncher() -> SwiftFormatLauncher {
         #if os(macOS)
-        URL(fileURLWithPath: "/usr/bin/xcrun")
+        return SwiftFormatLauncher(
+            executable: URL(fileURLWithPath: "/usr/bin/xcrun"),
+            leadingArguments: ["swift-format"]
+        )
         #else
-        URL(fileURLWithPath: "/usr/bin/env")
+        if let resolved = resolveLinuxSwiftFormatPath() {
+            return SwiftFormatLauncher(
+                executable: URL(fileURLWithPath: resolved),
+                leadingArguments: []
+            )
+        }
+        Diagnostics.error(
+            """
+            swift-format binary not found.
+
+            Searched (in order):
+              1. $SWIFT_FORMAT environment variable
+              2. Sibling of `swift` on $PATH (canonical Swift toolchain location)
+              3. /usr/local/bin/swift-format
+              4. /usr/bin/swift-format
+              5. swift-format on $PATH
+
+            Most Linux Swift toolchains ship swift-format in the same directory as `swift`. \
+            If your setup differs, set the SWIFT_FORMAT environment variable to an absolute path. \
+            See https://github.com/HeirloomLogic/SwiftFormatPlugin#how-it-works
+            """
+        )
+        return SwiftFormatLauncher(
+            executable: URL(fileURLWithPath: "/usr/bin/env"),
+            leadingArguments: ["swift-format"]
+        )
         #endif
     }
+
+    #if !os(macOS)
+    /// Walks the Linux discovery chain and returns the first executable swift-format
+    /// it finds, or nil if no candidate exists.
+    private func resolveLinuxSwiftFormatPath() -> String? {
+        let fm = FileManager.default
+        let env = ProcessInfo.processInfo.environment
+
+        if let override = env["SWIFT_FORMAT"], !override.isEmpty {
+            if fm.isExecutableFile(atPath: override) {
+                return override
+            }
+            Diagnostics.warning(
+                """
+                $SWIFT_FORMAT is set to "\(override)" but it is not an executable file. \
+                Falling back to toolchain discovery.
+                """
+            )
+        }
+
+        if let swiftDir = directoryContainingExecutable(named: "swift", env: env) {
+            let candidate = swiftDir + "/swift-format"
+            if fm.isExecutableFile(atPath: candidate) {
+                return candidate
+            }
+        }
+
+        for candidate in ["/usr/local/bin/swift-format", "/usr/bin/swift-format"]
+        where fm.isExecutableFile(atPath: candidate) {
+            return candidate
+        }
+
+        if let dir = directoryContainingExecutable(named: "swift-format", env: env) {
+            return dir + "/swift-format"
+        }
+
+        return nil
+    }
+
+    /// Returns the first directory in `$PATH` containing an executable named `name`.
+    private func directoryContainingExecutable(named name: String, env: [String: String]) -> String? {
+        guard let pathVar = env["PATH"], !pathVar.isEmpty else { return nil }
+        let fm = FileManager.default
+        for component in pathVar.split(separator: ":", omittingEmptySubsequences: true) {
+            let dir = String(component)
+            if fm.isExecutableFile(atPath: dir + "/" + name) {
+                return dir
+            }
+        }
+        return nil
+    }
+    #endif
 
     // MARK: Configuration Resolution
 
@@ -130,6 +228,7 @@ struct SwiftFormatCommandPlugin: CommandPlugin {
     ///
     /// Falls back to an embedded default written to the plugin work directory.
     func resolveConfiguration(
+        launcher: SwiftFormatLauncher,
         projectRoot: URL,
         pluginWorkDirectory: URL
     ) throws -> String {
@@ -155,14 +254,14 @@ struct SwiftFormatCommandPlugin: CommandPlugin {
             resolvedPath = fallbackURL.path
         }
 
-        emitPreflightDiagnostics(configPath: resolvedPath)
+        emitPreflightDiagnostics(launcher: launcher, configPath: resolvedPath)
         return resolvedPath
     }
 
     /// Emits an up-front summary of the config/toolchain so that when swift-format
     /// fails downstream with its cryptic `<unknown>: error: Unable to read configuration`,
     /// the context needed to diagnose the failure is already in the log above it.
-    private func emitPreflightDiagnostics(configPath: String) {
+    private func emitPreflightDiagnostics(launcher: SwiftFormatLauncher, configPath: String) {
         switch validateConfig(at: configPath) {
         case .ok(let version):
             let versionString = version.map(String.init) ?? "unknown"
@@ -171,7 +270,7 @@ struct SwiftFormatCommandPlugin: CommandPlugin {
                 swift-format plugin preflight:
                 • config: \(configPath)
                 • version: \(versionString)
-                • executable: \(swiftFormatExecutable().path) swift-format
+                • executable: \(launcher.displayCommand)
 
                 • If swift-format reports "Unable to read configuration", the most likely cause \
                 is a mismatch between the active toolchain's bundled swift-format and the schema \
@@ -193,10 +292,10 @@ struct SwiftFormatCommandPlugin: CommandPlugin {
     /// Best-effort probe of the active swift-format's `--version` output.
     ///
     /// Surfaces the toolchain version that would otherwise be invisible in logs.
-    private func logSwiftFormatVersion() {
+    private func logSwiftFormatVersion(launcher: SwiftFormatLauncher) {
         let process = Process()
-        process.executableURL = swiftFormatExecutable()
-        process.arguments = ["swift-format", "--version"]
+        process.executableURL = launcher.executable
+        process.arguments = launcher.leadingArguments + ["--version"]
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
@@ -223,7 +322,11 @@ struct SwiftFormatCommandPlugin: CommandPlugin {
     ///
     /// This catches config/toolchain mismatches before SPM's prebuild command
     /// runs — where a non-zero exit would fail the build.
-    func probeSwiftFormat(configPath: String, pluginWorkDirectory: URL) -> ProbeResult {
+    func probeSwiftFormat(
+        launcher: SwiftFormatLauncher,
+        configPath: String,
+        pluginWorkDirectory: URL
+    ) -> ProbeResult {
         let probeFile = pluginWorkDirectory.appendingPathComponent("_swift_format_probe.swift")
         do {
             try "// probe\n".write(to: probeFile, atomically: true, encoding: .utf8)
@@ -238,14 +341,14 @@ struct SwiftFormatCommandPlugin: CommandPlugin {
         }
 
         let process = Process()
-        process.executableURL = swiftFormatExecutable()
-        process.arguments = [
-            "swift-format",
-            "lint",
-            "--configuration",
-            configPath,
-            probeFile.path,
-        ]
+        process.executableURL = launcher.executable
+        process.arguments =
+            launcher.leadingArguments + [
+                "lint",
+                "--configuration",
+                configPath,
+                probeFile.path,
+            ]
 
         let stderrPipe = Pipe()
         process.standardOutput = FileHandle.nullDevice
@@ -290,7 +393,7 @@ struct SwiftFormatCommandPlugin: CommandPlugin {
 
     /// Emits a detailed warning when the preflight probe detects a config/toolchain
     /// mismatch, and explains that linting has been skipped.
-    func emitConfigWarning(configPath: String, stderr: String) {
+    func emitConfigWarning(launcher: SwiftFormatLauncher, configPath: String, stderr: String) {
         var version: Int?
         if case .ok(let v) = validateConfig(at: configPath) { version = v }
         let versionString = version.map(String.init) ?? "unknown"
@@ -306,11 +409,28 @@ struct SwiftFormatCommandPlugin: CommandPlugin {
             ---------------------------
 
             • config: \(configPath)  (version: \(versionString))
-            • executable: \(swiftFormatExecutable().path) swift-format
+            • executable: \(launcher.displayCommand)
             • Fix: upgrade the toolchain to match the config schema, or pin \
             the config to an older schema compatible with the active toolchain.
             """
         )
+    }
+}
+
+/// How to launch `swift-format` on the current host.
+///
+/// `executable` is the absolute path to spawn; `leadingArguments` are prepended
+/// before any swift-format CLI args. macOS uses `xcrun swift-format`; Linux uses
+/// the resolved binary directly with no leading arguments.
+struct SwiftFormatLauncher {
+    let executable: URL
+    let leadingArguments: [String]
+
+    /// Human-readable rendering for diagnostic logs.
+    var displayCommand: String {
+        leadingArguments.isEmpty
+            ? executable.path
+            : executable.path + " " + leadingArguments.joined(separator: " ")
     }
 }
 
