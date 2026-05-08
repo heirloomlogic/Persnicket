@@ -133,7 +133,15 @@ The `Link swift-format from Xcode toolchain` step is required because `lint-acti
 
 Match the Swift toolchain on your CI runner to the one on your development machine. Major.minor must align; patch should not matter.
 
-The `swift-format` configuration format can ship breaking changes without a version bump. A `.swift-format` file that parses cleanly under one Swift minor version may fail under another. If local dev and CI drift, you'll see lint failures that can't be reproduced locally.
+The `swift-format` configuration format has previously shipped breaking changes without a version bump. A `.swift-format` file that parses cleanly under one Swift minor version may fail under another. If local dev and CI drift, you could see lint failures that can't be reproduced locally.
+
+When using `swift-actions/setup-swift@v2` on Linux, the action may install an older default Swift if `swift-version` is omitted. This can produce a `swift-format cannot parse the configuration — linting skipped` warning, although the build succeeds. Pin the version to match your project:
+
+```yaml
+- uses: swift-actions/setup-swift@v2
+  with:
+    swift-version: "6.2"
+```
 
 ## How It Works
 
