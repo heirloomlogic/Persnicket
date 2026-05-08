@@ -127,6 +127,8 @@ jobs:
           swift_format_official_args: "--strict"
 ```
 
+The `Link swift-format from Xcode toolchain` step is required because `lint-action` is a standalone tool that calls `swift-format` from `$PATH`, while macOS runners only expose it via `xcrun`. This is independent of the plugin's own swift-format discovery — `lint-action` runs outside SwiftPM and doesn't go through the plugin.
+
 ## Toolchain Compatibility
 
 Match the Swift toolchain on your CI runner to the one on your development machine. Major.minor must align; patch should not matter.
