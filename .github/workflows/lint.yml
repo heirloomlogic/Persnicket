@@ -28,3 +28,9 @@ jobs:
 
       - name: Lint (strict)
         run: xcrun swift-format lint --strict --parallel --recursive --configuration .swift-format Plugins/
+
+      - name: Compile-check plugins via consumer fixture
+        working-directory: Examples/CompileCheck
+        run: |
+          swift build
+          swift package plugin --allow-writing-to-package-directory format-source-code
