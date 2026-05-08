@@ -2,20 +2,14 @@
   <img src="Images/SwiftFormatPlugin-logo@2x.png" alt="SwiftFormatPlugin" width="256">
 </p>
 
-<h1 align="center">SwiftFormatPlugin</h1>
+# SwiftFormatPlugin
 
-<p align="center">
-A lightweight SPM plugin that lints and formats Swift source files. Its only dependency is the Swift toolchain's built-in <code>swift-format</code> binary.
-</p>
-
-<p align="center">
+A lightweight SPM plugin that lints and formats Swift source files. Its only dependency is the Swift toolchain's built-in `swift-format` binary.
 
 [![Swift 6.0+](https://img.shields.io/badge/Swift-6.0+-orange.svg)](https://swift.org)
 [![Platform](https://img.shields.io/badge/Platform-macOS%20|%20Linux-blue.svg)](https://swift.org)
 [![CI](https://github.com/HeirloomLogic/SwiftFormatPlugin/actions/workflows/lint.yml/badge.svg)](https://github.com/HeirloomLogic/SwiftFormatPlugin/actions/workflows/lint.yml)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-
-</p>
 
 ## Plugins
 
@@ -30,7 +24,7 @@ Both plugins work with Swift Package Manager. On macOS, Xcode project integratio
 
 - **Swift 6.0+** toolchain that includes `swift-format`
 - **macOS**: Xcode 16+ (the plugin invokes `swift-format` via `xcrun`)
-- **Linux**: `swift-format` must be on your `$PATH`
+- **Linux**: The plugin auto-discovers `swift-format` from the active Swift toolchain. Set `$SWIFT_FORMAT` to an absolute path to override.
 
 The plugin can lint and format targets for any Apple platform (iOS, tvOS, watchOS, visionOS) — it runs on the host machine during the build.
 
@@ -141,11 +135,48 @@ The `swift-format` configuration format can ship breaking changes without a vers
 
 ## How It Works
 
-On **macOS**, the plugins invoke `swift-format` via `/usr/bin/xcrun`, which resolves to the binary in your active Xcode toolchain. On **Linux**, the plugins invoke `swift-format` directly from your `$PATH`. This means:
+On **macOS**, the plugins invoke `swift-format` via `/usr/bin/xcrun`, which resolves to the binary in your active Xcode toolchain.
+
+On **Linux**, the plugins auto-discover `swift-format` from the active Swift toolchain. Search order:
+
+1. `$SWIFT_FORMAT` environment variable, if set to an absolute path.
+2. Sibling of `swift` on `$PATH` — Swift toolchains ship `swift-format` in the same `bin` directory as `swift`. This is the canonical location and matches what `dirname $(which swift)/swift-format` would produce.
+3. `/usr/local/bin/swift-format` and `/usr/bin/swift-format`.
+4. `swift-format` directly on `$PATH`.
+
+This means consumers don't need to symlink the binary into `/usr/local/bin` from CI — runners using the official Swift toolchain (e.g. `swift-actions/setup-swift`, the `swift:*` Docker images) work out of the box. If discovery fails, the plugin emits a clear error listing every path it checked instead of failing with a cryptic `env: 'swift-format': No such file or directory`.
+
+The approach buys a few properties:
 
 - Zero compile-time cost: no `swift-syntax` dependency tree to build.
 - Always in sync with your toolchain's Swift version.
 - No binary artifacts to download or manage.
+
+## Alternatives
+
+A few other tools cover the same ground. The right pick depends on how much control you want versus how much weight you're willing to carry.
+
+### `swift-format` (Apple/SwiftLang)
+
+What this plugin uses. Ships with the Swift toolchain, no extra dependencies, always version-matched to your compiler, opinionated defaults out of the box.
+
+Tradeoffs: less configurable than SwiftLint, smaller rule set, and the configuration format can drift between Swift minor versions (see [Toolchain Compatibility](#toolchain-compatibility)).
+
+### [SwiftLint](https://github.com/realm/SwiftLint)
+
+The most powerful option — ~200+ rules, custom rules, mature autocorrect, large community. Best integrated via [`SwiftLintPlugins`](https://github.com/SimplyDanny/SwiftLintPlugins), which ships SwiftLint as a `.binaryTarget` (prebuilt `SwiftLintBinary.artifactbundle`) so consumers don't pay the `SourceKitten`/`SwiftSyntax` compile cost.
+
+Tradeoffs: the prebuilt binary must be kept version-aligned with your Swift toolchain, and `.swiftlint.yml` exposes hundreds of knobs to tune. Worth the cost when you need that level of control.
+
+### [SwiftFormat](https://github.com/nicklockwood/SwiftFormat) (Nick Lockwood)
+
+A dedicated formatter — fast, mature, focused purely on formatting rather than lint. Extensive rule set, distributable as a binary.
+
+Tradeoffs: a separate tool to install and version-align, and the name collision with Apple's `swift-format` is a frequent source of confusion.
+
+### Why this plugin uses `swift-format`
+
+Lightweight integration is the deciding factor. SwiftLint offers much more control, but `swift-format`'s opinionated defaults get ~99% of the way to a sensible style for most projects. Reaching for the heavier tool only pays off when the remaining 1% actually matters.
 
 ## Development
 
