@@ -8,21 +8,25 @@ extension SwiftFormatCommandPlugin: XcodeCommandPlugin {
         context: XcodePluginContext,
         arguments: [String]
     ) throws {
+        let launcher = swiftFormatLauncher()
+
         let configPath = try resolveConfiguration(
+            launcher: launcher,
             projectRoot: context.xcodeProject.directoryURL,
             pluginWorkDirectory: context.pluginWorkDirectoryURL
         )
 
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-        process.arguments = [
-            "swift-format", "format",
-            "--in-place",
-            "--parallel",
-            "--configuration", configPath,
-            "--recursive",
-            context.xcodeProject.directoryURL.path(percentEncoded: false),
-        ]
+        process.executableURL = launcher.executable
+        process.arguments =
+            launcher.leadingArguments + [
+                "format",
+                "--in-place",
+                "--parallel",
+                "--configuration", configPath,
+                "--recursive",
+                context.xcodeProject.directoryURL.path(percentEncoded: false),
+            ]
 
         let stderrPipe = Pipe()
         process.standardError = stderrPipe

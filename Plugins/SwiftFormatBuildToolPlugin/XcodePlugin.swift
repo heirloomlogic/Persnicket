@@ -8,25 +8,29 @@ extension SwiftFormatBuildToolPlugin: XcodeBuildToolPlugin {
         context: XcodePluginContext,
         target: XcodeTarget
     ) throws -> [Command] {
+        let launcher = swiftFormatLauncher()
+
         let configPath = try resolveConfiguration(
+            launcher: launcher,
             projectRoot: context.xcodeProject.directoryURL,
             pluginWorkDirectory: context.pluginWorkDirectoryURL
         )
 
         if case .configError(let stderr) = probeSwiftFormat(
+            launcher: launcher,
             configPath: configPath,
             pluginWorkDirectory: context.pluginWorkDirectoryURL
         ) {
-            emitConfigWarning(configPath: configPath, stderr: stderr)
+            emitConfigWarning(launcher: launcher, configPath: configPath, stderr: stderr)
             return []
         }
 
         return [
             .prebuildCommand(
                 displayName: "swift-format lint (\(target.displayName))",
-                executable: URL(fileURLWithPath: "/usr/bin/xcrun"),
-                arguments: [
-                    "swift-format", "lint",
+                executable: launcher.executable,
+                arguments: launcher.leadingArguments + [
+                    "lint",
                     "--parallel",
                     "--configuration", configPath,
                     "--recursive",

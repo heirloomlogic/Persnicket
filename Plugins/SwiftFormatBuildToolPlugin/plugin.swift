@@ -73,7 +73,7 @@ struct SwiftFormatBuildToolPlugin: BuildToolPlugin {
     /// If Linux discovery fails, emits a `Diagnostics.error` listing the searched paths
     /// and falls back to `/usr/bin/env swift-format` — which still fails at launch, but
     /// the error above the failure now explains why.
-    private func swiftFormatLauncher() -> SwiftFormatLauncher {
+    func swiftFormatLauncher() -> SwiftFormatLauncher {
         #if os(macOS)
         return SwiftFormatLauncher(
             executable: URL(fileURLWithPath: "/usr/bin/xcrun"),
