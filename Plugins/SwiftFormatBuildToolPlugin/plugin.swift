@@ -49,12 +49,21 @@ struct SwiftFormatBuildToolPlugin: BuildToolPlugin {
             arguments.append(file.url.path(percentEncoded: false))
         }
 
+        let outputsDir = context.pluginWorkDirectoryURL.appendingPathComponent(
+            "outputs",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: outputsDir,
+            withIntermediateDirectories: true
+        )
+
         return [
             .prebuildCommand(
                 displayName: "swift-format lint (\(target.name))",
                 executable: launcher.executable,
                 arguments: arguments,
-                outputFilesDirectory: context.pluginWorkDirectoryURL
+                outputFilesDirectory: outputsDir
             )
         ]
     }

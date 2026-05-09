@@ -25,6 +25,15 @@ extension SwiftFormatBuildToolPlugin: XcodeBuildToolPlugin {
             return []
         }
 
+        let outputsDir = context.pluginWorkDirectoryURL.appendingPathComponent(
+            "outputs",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: outputsDir,
+            withIntermediateDirectories: true
+        )
+
         return [
             .prebuildCommand(
                 displayName: "swift-format lint (\(target.displayName))",
@@ -36,7 +45,7 @@ extension SwiftFormatBuildToolPlugin: XcodeBuildToolPlugin {
                     "--recursive",
                     context.xcodeProject.directoryURL.path(percentEncoded: false),
                 ],
-                outputFilesDirectory: context.pluginWorkDirectoryURL
+                outputFilesDirectory: outputsDir
             )
         ]
     }
