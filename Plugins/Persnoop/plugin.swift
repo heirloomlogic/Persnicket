@@ -2,7 +2,7 @@ import Foundation
 import PackagePlugin
 
 @main
-struct SwiftFormatBuildToolPlugin: BuildToolPlugin {
+struct Persnoop: BuildToolPlugin {
     func createBuildCommands(
         context: PluginContext,
         target: Target
@@ -108,7 +108,7 @@ struct SwiftFormatBuildToolPlugin: BuildToolPlugin {
 
             Most Linux Swift toolchains ship swift-format in the same directory as `swift`. \
             If your setup differs, set the SWIFT_FORMAT environment variable to an absolute path. \
-            See https://github.com/HeirloomLogic/SwiftFormatPlugin#how-it-works
+            See https://github.com/HeirloomLogic/Persnicket#how-it-works
             """
         )
         return SwiftFormatLauncher(
@@ -193,7 +193,7 @@ struct SwiftFormatBuildToolPlugin: BuildToolPlugin {
             Diagnostics.remark(
                 """
                 No .swift-format found in project root, using the bundled fallback configuration.
-                • Heirloom Logic SwiftFormatPlugin repository: https://github.com/HeirloomLogic/SwiftFormatPlugin
+                • Heirloom Logic Persnicket repository: https://github.com/HeirloomLogic/Persnicket
                 • Swift Programming Language `swift-format` repository: https://github.com/swiftlang/swift-format
                 • Rules reference: \
                 https://github.com/swiftlang/swift-format/blob/main/Documentation/RuleDocumentation.md

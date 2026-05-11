@@ -1,4 +1,4 @@
-# Contributing to SwiftFormatPlugin
+# Contributing to Persnicket
 
 ## Requirements
 
@@ -51,7 +51,7 @@ All checks must pass before merge.
 
 ## Reporting issues
 
-Use the [issue templates](https://github.com/HeirloomLogic/SwiftFormatPlugin/issues/new/choose) to report bugs or request features.
+Use the [issue templates](https://github.com/HeirloomLogic/Persnicket/issues/new/choose) to report bugs or request features.
 
 ## Code of Conduct
 

@@ -1,22 +1,22 @@
 <p align="center">
-  <img src="Images/SwiftFormatPlugin-logo@2x.png" alt="SwiftFormatPlugin" width="256">
+  <img src=".github/Persnicket-logo@2x.png" alt="Persnicket" width="320">
 </p>
 
-# SwiftFormatPlugin
+# Persnicket
 
 A lightweight SPM plugin that lints and formats Swift source files. Its only dependency is the Swift toolchain's built-in `swift-format` binary.
 
 [![Swift 6.0+](https://img.shields.io/badge/Swift-6.0+-orange.svg)](https://swift.org)
 [![Platform](https://img.shields.io/badge/Platform-macOS%20|%20Linux-blue.svg)](https://swift.org)
-[![CI](https://github.com/HeirloomLogic/SwiftFormatPlugin/actions/workflows/lint.yml/badge.svg)](https://github.com/HeirloomLogic/SwiftFormatPlugin/actions/workflows/lint.yml)
+[![CI](https://github.com/HeirloomLogic/Persnicket/actions/workflows/lint.yml/badge.svg)](https://github.com/HeirloomLogic/Persnicket/actions/workflows/lint.yml)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 ## Plugins
 
 | Plugin | Type | What it does |
 |---|---|---|
-| **SwiftFormatBuildToolPlugin** | Build Tool | Runs `swift-format lint` automatically on every build as a pre-build step. |
-| **SwiftFormatCommandPlugin** | Command | Runs `swift-format format --in-place` on demand to reformat source files. |
+| **Persnoop** | Build Tool | Runs `swift-format lint` automatically on every build as a pre-build step. |
+| **Persnipe** | Command | Runs `swift-format format --in-place` on demand to reformat source files. |
 
 Both plugins work with Swift Package Manager. On macOS, Xcode project integration is also supported.
 
@@ -34,7 +34,7 @@ Add the package to your `Package.swift` dependencies:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/HeirloomLogic/SwiftFormatPlugin", from: "1.5.0"),
+    .package(url: "https://github.com/HeirloomLogic/Persnicket", from: "2.0.0"),
 ]
 ```
 
@@ -48,7 +48,7 @@ Apply the plugin to any target you want linted on every build:
 .target(
     name: "MyTarget",
     plugins: [
-        .plugin(name: "SwiftFormatBuildToolPlugin", package: "SwiftFormatPlugin"),
+        .plugin(name: "Persnoop", package: "Persnicket"),
     ]
 )
 ```
@@ -63,7 +63,7 @@ swift package plugin --allow-writing-to-package-directory format-source-code
 
 The plugin runs silently on success — use `git diff` to see what changed.
 
-In Xcode: **right-click your project or package → SwiftFormatCommandPlugin**.
+In Xcode: **right-click your project or package → Persnipe**.
 
 ## Configuration
 
@@ -116,7 +116,7 @@ jobs:
       - name: Setup swift-format lint
         run: |
           swift package resolve
-          .build/checkouts/SwiftFormatPlugin/bin/ci-lint-setup
+          .build/checkouts/Persnicket/bin/ci-lint-setup
 
       - name: Lint (strict)
         run: xcrun swift-format lint --strict --parallel --recursive --configuration .swift-format Sources Tests
@@ -205,7 +205,7 @@ This repo ships shell scripts under `bin/` for working on the plugin itself:
 
 ## Links
 
-- [SwiftFormatPlugin repository](https://github.com/HeirloomLogic/SwiftFormatPlugin)
+- [Persnicket repository](https://github.com/HeirloomLogic/Persnicket)
 - [`swift-format` repository](https://github.com/swiftlang/swift-format)
 - [`swift-format` rules reference](https://github.com/swiftlang/swift-format/blob/main/Documentation/RuleDocumentation.md)
 

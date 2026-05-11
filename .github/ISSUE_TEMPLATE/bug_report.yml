@@ -1,5 +1,5 @@
 name: Bug Report
-description: Report a bug in SwiftFormatPlugin
+description: Report a bug in Persnicket
 labels: ["bug"]
 body:
   - type: textarea
@@ -35,8 +35,8 @@ body:
     attributes:
       label: Plugin
       options:
-        - SwiftFormatBuildToolPlugin
-        - SwiftFormatCommandPlugin
+        - Persnoop (build tool)
+        - Persnipe (command)
         - Both / Not sure
     validations:
       required: true

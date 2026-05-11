@@ -3,7 +3,7 @@ import Foundation
 import PackagePlugin
 import XcodeProjectPlugin
 
-extension SwiftFormatBuildToolPlugin: XcodeBuildToolPlugin {
+extension Persnoop: XcodeBuildToolPlugin {
     func createBuildCommands(
         context: XcodePluginContext,
         target: XcodeTarget
