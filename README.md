@@ -89,7 +89,9 @@ swift-format dump-configuration > .swift-format
 
 ## CI
 
-For CI lint workflows we recommend using [`wearerequired/lint-action`](https://github.com/wearerequired/lint-action) with `swift_format_official` to surface lint violations as inline annotations in pull request diffs. Here's a sample workflow:
+For CI lint workflows we recommend invoking `swift-format lint --strict` directly and registering a GitHub [problem matcher](https://github.com/actions/toolkit/blob/main/docs/problem-matchers.md) so violations appear as inline annotations on the pull request diff. The matcher is a small regex file that tells the runner to parse `swift-format`'s output (`path:line:col: severity: message`) into native annotations — no third-party action, no extra permissions, and the linter's exit code drives job pass/fail directly.
+
+A ready-to-use matcher ships in this repo at [`.github/swift-format-matcher.json`](.github/swift-format-matcher.json). Sample workflow (macOS):
 
 ```yaml
 name: Lint
@@ -99,18 +101,11 @@ on:
   push:
     branches: [main]
 
-permissions:
-  checks: write
-  contents: read
-
 jobs:
   swift-format-lint:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
-
-      - name: Link swift-format from Xcode toolchain
-        run: ln -s "$(xcrun --find swift-format)" /usr/local/bin/swift-format
 
       # Optional — only needed if your project doesn't include its own .swift-format
       - name: Resolve swift-format config
@@ -120,14 +115,27 @@ jobs:
             cp .build/checkouts/SwiftFormatPlugin/.swift-format .swift-format
           fi
 
-      - uses: wearerequired/lint-action@v2
-        with:
-          swift_format_official: true
-          # Optional — omit for lenient mode (warnings only, check still passes)
-          swift_format_official_args: "--strict"
+      - name: Fetch swift-format problem matcher
+        run: |
+          mkdir -p .github
+          curl -fsSL -o .github/swift-format-matcher.json \
+            https://raw.githubusercontent.com/heirloomlogic/SwiftFormatPlugin/main/.github/swift-format-matcher.json
+
+      - name: Enable swift-format problem matcher
+        run: echo "::add-matcher::.github/swift-format-matcher.json"
+
+      - name: Lint (strict)
+        run: xcrun swift-format lint --strict --parallel --recursive Sources Tests
 ```
 
-The `Link swift-format from Xcode toolchain` step is required because `lint-action` is a standalone tool that calls `swift-format` from `$PATH`, while macOS runners only expose it via `xcrun`. This is independent of the plugin's own swift-format discovery — `lint-action` runs outside SwiftPM and doesn't go through the plugin.
+If you'd rather not fetch the matcher at runtime, vendor it into your repo at `.github/swift-format-matcher.json` and drop the `Fetch` step.
+
+On Linux, install Swift with `swift-actions/setup-swift@v2` instead of relying on Xcode; the rest of the recipe is identical (drop the `xcrun` prefix from the lint command).
+
+**Caveats:**
+
+- Inline annotations on the PR "Files changed" tab only show for lines that are part of the diff. Violations on unchanged lines still appear in the workflow run summary.
+- GitHub caps workflow-command annotations at 10 errors and 10 warnings shown inline per run; the remainder are listed in the run summary. For typical PRs this is fine — for a first-time lint sweep across a large codebase, run `swift-format lint` locally for the full list.
 
 ## Toolchain Compatibility
 

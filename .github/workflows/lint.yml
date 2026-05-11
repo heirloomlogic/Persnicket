@@ -26,6 +26,9 @@ jobs:
       - name: Verify shared plugin infrastructure is identical
         run: ./bin/check-shared-plugin-code
 
+      - name: Enable swift-format problem matcher
+        run: echo "::add-matcher::.github/swift-format-matcher.json"
+
       - name: Lint (strict)
         run: xcrun swift-format lint --strict --parallel --recursive --configuration .swift-format Plugins/
 
@@ -34,3 +37,19 @@ jobs:
         run: |
           swift build
           swift package plugin --allow-writing-to-package-directory format-source-code
+
+  swift-format-lint-linux:
+    name: swift-format (Linux, downstream-style)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.2"
+
+      - name: Enable swift-format problem matcher
+        run: echo "::add-matcher::.github/swift-format-matcher.json"
+
+      - name: Lint (strict)
+        run: swift-format lint --strict --parallel --recursive --configuration .swift-format Plugins/
