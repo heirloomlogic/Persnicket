@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="Images/Persnicket-logo@2x.png" alt="Persnicket" width="256">
+  <img src=".github/Persnicket-logo@2x.png" alt="Persnicket" width="320">
 </p>
 
 # Persnicket
