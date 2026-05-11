@@ -1,0 +1,36 @@
+#!/usr/bin/env sh
+# Prepares the current repository for a swift-format lint job:
+#   1. Copies a default .swift-format into the project root if one is missing.
+#   2. Installs the swift-format problem matcher at .github/swift-format-matcher.json.
+#   3. Emits the GitHub Actions ::add-matcher:: workflow command so violations
+#      appear as inline PR annotations.
+#
+# Idempotent and safe to re-run. A project's own .swift-format is never
+# overwritten; the matcher is always refreshed from this package's copy.
+set -eu
+
+PKG_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SRC_CONFIG="$PKG_ROOT/.swift-format"
+SRC_MATCHER="$PKG_ROOT/.github/swift-format-matcher.json"
+
+for f in "$SRC_CONFIG" "$SRC_MATCHER"; do
+    [ -f "$f" ] || { echo "error: $f not found in package checkout" >&2; exit 1; }
+done
+
+if [ -f .swift-format ]; then
+    echo "ci-lint-setup: .swift-format already present, leaving project copy untouched" >&2
+else
+    cp "$SRC_CONFIG" .swift-format
+    echo "ci-lint-setup: copied default .swift-format from $SRC_CONFIG" >&2
+fi
+
+mkdir -p .github
+DEST_MATCHER="$(cd .github && pwd)/swift-format-matcher.json"
+if [ "$SRC_MATCHER" = "$DEST_MATCHER" ]; then
+    echo "ci-lint-setup: problem matcher already in place at .github/swift-format-matcher.json" >&2
+else
+    cp "$SRC_MATCHER" .github/swift-format-matcher.json
+    echo "ci-lint-setup: installed problem matcher at .github/swift-format-matcher.json" >&2
+fi
+
+echo "::add-matcher::.github/swift-format-matcher.json"

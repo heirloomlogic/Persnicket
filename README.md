@@ -91,7 +91,13 @@ swift-format dump-configuration > .swift-format
 
 For CI lint workflows we recommend invoking `swift-format lint --strict` directly and registering a GitHub [problem matcher](https://github.com/actions/toolkit/blob/main/docs/problem-matchers.md) so violations appear as inline annotations on the pull request diff. The matcher is a small regex file that tells the runner to parse `swift-format`'s output (`path:line:col: severity: message`) into native annotations — no third-party action, no extra permissions, and the linter's exit code drives job pass/fail directly.
 
-A ready-to-use matcher ships in this repo at [`.github/swift-format-matcher.json`](.github/swift-format-matcher.json). Sample workflow (macOS):
+A ready-to-use matcher ships in this repo at [`.github/swift-format-matcher.json`](.github/swift-format-matcher.json), along with a `bin/ci-lint-setup` script that wires everything up in a single step. The script:
+
+- copies the default [`.swift-format`](.swift-format) into your project root if you don't already have one,
+- installs the problem matcher at `.github/swift-format-matcher.json`, and
+- emits the `::add-matcher::` workflow command so violations appear as inline PR annotations.
+
+It's idempotent and never overwrites an existing project `.swift-format`. Sample workflow (macOS):
 
 ```yaml
 name: Lint
@@ -107,30 +113,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Optional — only needed if your project doesn't include its own .swift-format
-      - name: Resolve swift-format config
+      - name: Setup swift-format lint
         run: |
-          if [ ! -f .swift-format ]; then
-            swift package resolve
-            cp .build/checkouts/SwiftFormatPlugin/.swift-format .swift-format
-          fi
-
-      - name: Fetch swift-format problem matcher
-        run: |
-          mkdir -p .github
-          curl -fsSL -o .github/swift-format-matcher.json \
-            https://raw.githubusercontent.com/heirloomlogic/SwiftFormatPlugin/main/.github/swift-format-matcher.json
-
-      - name: Enable swift-format problem matcher
-        run: echo "::add-matcher::.github/swift-format-matcher.json"
+          swift package resolve
+          .build/checkouts/SwiftFormatPlugin/bin/ci-lint-setup
 
       - name: Lint (strict)
-        run: xcrun swift-format lint --strict --parallel --recursive Sources Tests
+        run: xcrun swift-format lint --strict --parallel --recursive --configuration .swift-format Sources Tests
 ```
 
-If you'd rather not fetch the matcher at runtime, vendor it into your repo at `.github/swift-format-matcher.json` and drop the `Fetch` step.
-
-On Linux, install Swift with `swift-actions/setup-swift@v2` instead of relying on Xcode; the rest of the recipe is identical (drop the `xcrun` prefix from the lint command).
+On Linux, install Swift with `swift-actions/setup-swift@v2` before the setup step, and drop the `xcrun` prefix from the lint command. The setup script itself is portable `sh` and runs unchanged.
 
 **Caveats:**
 
