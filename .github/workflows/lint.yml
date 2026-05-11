@@ -26,8 +26,8 @@ jobs:
       - name: Verify shared plugin infrastructure is identical
         run: ./bin/check-shared-plugin-code
 
-      - name: Enable swift-format problem matcher
-        run: echo "::add-matcher::.github/swift-format-matcher.json"
+      - name: Setup swift-format lint
+        run: ./bin/ci-lint-setup
 
       - name: Lint (strict)
         run: xcrun swift-format lint --strict --parallel --recursive --configuration .swift-format Plugins/
@@ -48,8 +48,8 @@ jobs:
         with:
           swift-version: "6.2"
 
-      - name: Enable swift-format problem matcher
-        run: echo "::add-matcher::.github/swift-format-matcher.json"
+      - name: Setup swift-format lint
+        run: ./bin/ci-lint-setup
 
       - name: Lint (strict)
         run: swift-format lint --strict --parallel --recursive --configuration .swift-format Plugins/
