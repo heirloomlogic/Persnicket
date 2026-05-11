@@ -21,7 +21,7 @@ jobs:
       - name: Verify embedded fallback is in sync with .swift-format
         run: |
           ./bin/regenerate-embedded-fallback
-          git diff --exit-code -- Plugins/SwiftFormatBuildToolPlugin/plugin.swift Plugins/SwiftFormatCommandPlugin/plugin.swift
+          git diff --exit-code -- Plugins/Persnoop/plugin.swift Plugins/Persnipe/plugin.swift
 
       - name: Verify shared plugin infrastructure is identical
         run: ./bin/check-shared-plugin-code

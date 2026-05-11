@@ -3,7 +3,7 @@ import Foundation
 import PackagePlugin
 import XcodeProjectPlugin
 
-extension SwiftFormatCommandPlugin: XcodeCommandPlugin {
+extension Persnipe: XcodeCommandPlugin {
     func performCommand(
         context: XcodePluginContext,
         arguments: [String]

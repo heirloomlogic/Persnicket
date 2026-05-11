@@ -11,8 +11,8 @@ set -eu
 cd "$(dirname "$0")/.."
 
 CONFIG=".swift-format"
-FILE_A="Plugins/SwiftFormatBuildToolPlugin/plugin.swift"
-FILE_B="Plugins/SwiftFormatCommandPlugin/plugin.swift"
+FILE_A="Plugins/Persnoop/plugin.swift"
+FILE_B="Plugins/Persnipe/plugin.swift"
 
 [ -f "$CONFIG" ] || { echo "error: $CONFIG not found" >&2; exit 1; }
 [ -f "$FILE_A" ] || { echo "error: $FILE_A not found" >&2; exit 1; }

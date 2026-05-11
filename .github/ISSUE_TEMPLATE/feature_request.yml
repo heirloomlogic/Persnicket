@@ -31,8 +31,8 @@ body:
     attributes:
       label: Plugin scope
       options:
-        - SwiftFormatBuildToolPlugin
-        - SwiftFormatCommandPlugin
+        - Persnoop (build tool)
+        - Persnipe (command)
         - Both
         - Not specific to a plugin
     validations:

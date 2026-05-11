@@ -10,8 +10,8 @@ cd "$(dirname "$0")/.."
 
 MARKER="    // MARK: - Shared Plugin Infrastructure (must be identical across all plugin targets)"
 
-FILE_A="Plugins/SwiftFormatBuildToolPlugin/plugin.swift"
-FILE_B="Plugins/SwiftFormatCommandPlugin/plugin.swift"
+FILE_A="Plugins/Persnoop/plugin.swift"
+FILE_B="Plugins/Persnipe/plugin.swift"
 
 for f in "$FILE_A" "$FILE_B"; do
     [ -f "$f" ] || { echo "error: $f not found" >&2; exit 1; }

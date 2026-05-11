@@ -2,24 +2,24 @@
 import PackageDescription
 
 let package = Package(
-    name: "SwiftFormatPlugin",
+    name: "Persnicket",
     products: [
         .plugin(
-            name: "SwiftFormatBuildToolPlugin",
-            targets: ["SwiftFormatBuildToolPlugin"]
+            name: "Persnoop",
+            targets: ["Persnoop"]
         ),
         .plugin(
-            name: "SwiftFormatCommandPlugin",
-            targets: ["SwiftFormatCommandPlugin"]
+            name: "Persnipe",
+            targets: ["Persnipe"]
         ),
     ],
     targets: [
         .plugin(
-            name: "SwiftFormatBuildToolPlugin",
+            name: "Persnoop",
             capability: .buildTool()
         ),
         .plugin(
-            name: "SwiftFormatCommandPlugin",
+            name: "Persnipe",
             capability: .command(
                 intent: .sourceCodeFormatting(),
                 permissions: [
