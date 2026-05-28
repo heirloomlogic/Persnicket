@@ -5,7 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.0.1] - 2026-05-28
+
+### Changed
+
+- README updates and refreshed logo asset.
 
 ## [2.0.0] - 2026-05-11
 
@@ -114,7 +118,8 @@ Consumers must update `Package.swift`:
 - Xcode project integration for both plugins (macOS).
 - Embedded fallback configuration for projects without a `.swift-format` file.
 
-[Unreleased]: https://github.com/HeirloomLogic/Persnicket/compare/2.0.0...HEAD
+[Unreleased]: https://github.com/HeirloomLogic/Persnicket/compare/2.1.0...HEAD
+[2.1.0]: https://github.com/HeirloomLogic/Persnicket/compare/2.0.0...2.1.0
 [2.0.0]: https://github.com/HeirloomLogic/Persnicket/compare/1.6.2...2.0.0
 [1.6.2]: https://github.com/HeirloomLogic/Persnicket/compare/1.6.1...1.6.2
 [1.6.1]: https://github.com/HeirloomLogic/Persnicket/compare/1.6.0...1.6.1

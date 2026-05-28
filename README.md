@@ -1,5 +1,5 @@
 <p align="center">
-  <img src=".github/Persnicket-logo@2x.png" alt="Persnicket" width="320">
+  <img src=".github/Persnicket-logo@2x.png" alt="Persnicket" height="256">
 </p>
 
 # Persnicket
@@ -198,6 +198,12 @@ This repo ships shell scripts under `bin/` for working on the plugin itself:
 | `bin/check-shared-plugin-code` | Verifies that the shared plugin infrastructure section is byte-identical across both plugin targets. |
 
 **Editing the default config.** The `.swift-format` file at the repo root is the single source of truth for this plugin's default configuration. If you change it, run `bin/regenerate-embedded-fallback` before committing — the script rewrites the `private let fallbackConfigJSON = """..."""` block in both plugin source files to match.
+
+**Formatting the plugin's own source.** The `Persnipe` command plugin only formats its host package's source modules, so it's a no-op when invoked on Persnicket itself (this package contains only plugin targets). To reformat the plugin sources after editing them or changing `.swift-format`, invoke `swift-format` directly:
+
+```sh
+xcrun swift-format format --in-place --parallel --recursive --configuration .swift-format Plugins/
+```
 
 **Why the duplication exists.** SwiftPM plugin targets cannot share Swift source across targets and cannot carry resources (no `resources:` parameter on `.plugin(...)`, no `PluginContext` API to locate the plugin's own on-disk files), so both plugin source files must embed the fallback as a literal. The generator + CI drift check turns this structural duplication into a managed one: you only ever edit `.swift-format`, and CI fails if the embedded literals are out of sync.
 
