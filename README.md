@@ -53,6 +53,8 @@ Apply the plugin to any target you want linted on every build:
 )
 ```
 
+If your package is itself consumed as a dependency, applying Persnoop pulls Persnicket into your consumers' dependency graph too. See [DEV-TOOLING.md](DEV-TOOLING.md) to gate it out so only your own builds run the linter.
+
 ### Command Plugin (on-demand formatting)
 
 The command plugin registers the SwiftPM built-in `format-source-code` verb. Run it from the command line:
@@ -212,6 +214,7 @@ xcrun swift-format format --in-place --parallel --recursive --configuration .swi
 ## Links
 
 - [Persnicket repository](https://github.com/HeirloomLogic/Persnicket)
+- [Keeping dev-only plugins out of consumers' dependency graphs](DEV-TOOLING.md)
 - [`swift-format` repository](https://github.com/swiftlang/swift-format)
 - [`swift-format` rules reference](https://github.com/swiftlang/swift-format/blob/main/Documentation/RuleDocumentation.md)
 
