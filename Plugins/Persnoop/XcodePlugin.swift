@@ -8,6 +8,16 @@ extension Persnoop: XcodeBuildToolPlugin {
         context: XcodePluginContext,
         target: XcodeTarget
     ) throws -> [Command] {
+        let swiftFiles = target.inputFiles.filter {
+            $0.type == .source && $0.url.pathExtension == "swift"
+        }
+        guard !swiftFiles.isEmpty else {
+            Diagnostics.remark(
+                "Skipping target \"\(target.displayName)\" because it has no Swift source files."
+            )
+            return []
+        }
+
         let launcher = swiftFormatLauncher()
 
         let configPath = try resolveConfiguration(
@@ -25,6 +35,16 @@ extension Persnoop: XcodeBuildToolPlugin {
             return []
         }
 
+        var arguments =
+            launcher.leadingArguments + [
+                "lint",
+                "--parallel",
+                "--configuration", configPath,
+            ]
+        for file in swiftFiles {
+            arguments.append(file.url.path(percentEncoded: false))
+        }
+
         let outputsDir = context.pluginWorkDirectoryURL.appendingPathComponent(
             "outputs",
             isDirectory: true
@@ -38,13 +58,7 @@ extension Persnoop: XcodeBuildToolPlugin {
             .prebuildCommand(
                 displayName: "swift-format lint (\(target.displayName))",
                 executable: launcher.executable,
-                arguments: launcher.leadingArguments + [
-                    "lint",
-                    "--parallel",
-                    "--configuration", configPath,
-                    "--recursive",
-                    context.xcodeProject.directoryURL.path(percentEncoded: false),
-                ],
+                arguments: arguments,
                 outputFilesDirectory: outputsDir
             )
         ]

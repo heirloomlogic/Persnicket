@@ -41,11 +41,14 @@ Keep PRs focused — one logical change per PR.
 
 ## CI checks
 
-The GitHub Actions workflow (`.github/workflows/lint.yml`) runs on every PR and push to `main`:
+The GitHub Actions workflow (`.github/workflows/lint.yml`) runs on every PR and push to `main`, on both macOS and Linux:
 
-1. Regenerates the embedded fallback literals and verifies there is no diff.
-2. Verifies shared plugin infrastructure is identical across both plugin targets.
-3. Runs `swift-format lint --strict` on the plugin source.
+1. Regenerates the embedded fallback literals and verifies there is no diff (macOS).
+2. Verifies shared plugin infrastructure is identical across both plugin targets (macOS).
+3. Runs `swift-format lint --strict` on the plugin source (macOS and Linux).
+4. Compile-checks the plugins via the `Examples/CompileCheck` consumer fixture and runs the
+   `Persnipe` command plugin against it (macOS and Linux — the Linux build covers the
+   `#if !os(macOS)` discovery code paths).
 
 All checks must pass before merge.
 

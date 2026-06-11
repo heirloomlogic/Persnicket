@@ -16,6 +16,31 @@ extension Persnipe: XcodeCommandPlugin {
             pluginWorkDirectory: context.pluginWorkDirectoryURL
         )
 
+        // Format only the Swift sources that belong to the project's targets.
+        // Formatting the project directory recursively would also rewrite
+        // vendored and generated Swift code that the project doesn't own.
+        var seenPaths = Set<String>()
+        var swiftFilePaths: [String] = []
+        for target in context.xcodeProject.targets {
+            for file in target.inputFiles
+            where file.type == .source && file.url.pathExtension == "swift" {
+                let path = file.url.path(percentEncoded: false)
+                if seenPaths.insert(path).inserted {
+                    swiftFilePaths.append(path)
+                }
+            }
+        }
+
+        guard !swiftFilePaths.isEmpty else {
+            Diagnostics.remark(
+                """
+                Skipping project "\(context.xcodeProject.displayName)" because its targets \
+                have no Swift source files.
+                """
+            )
+            return
+        }
+
         let process = Process()
         process.executableURL = launcher.executable
         process.arguments =
@@ -24,9 +49,7 @@ extension Persnipe: XcodeCommandPlugin {
                 "--in-place",
                 "--parallel",
                 "--configuration", configPath,
-                "--recursive",
-                context.xcodeProject.directoryURL.path(percentEncoded: false),
-            ]
+            ] + swiftFilePaths
 
         let stderrPipe = Pipe()
         process.standardError = stderrPipe

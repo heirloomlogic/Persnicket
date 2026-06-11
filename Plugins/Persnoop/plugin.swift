@@ -14,7 +14,9 @@ struct Persnoop: BuildToolPlugin {
             return []
         }
 
-        let sourceFiles = sourceModule.sourceFiles(withSuffix: ".swift")
+        let sourceFiles = sourceModule.sourceFiles(withSuffix: ".swift").filter {
+            $0.type == .source && $0.url.pathExtension == "swift"
+        }
         guard !sourceFiles.isEmpty else {
             Diagnostics.remark(
                 "Skipping target \"\(target.name)\" because it has no Swift source files."

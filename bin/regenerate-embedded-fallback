@@ -18,6 +18,20 @@ FILE_B="Plugins/Persnipe/plugin.swift"
 [ -f "$FILE_A" ] || { echo "error: $FILE_A not found" >&2; exit 1; }
 [ -f "$FILE_B" ] || { echo "error: $FILE_B not found" >&2; exit 1; }
 
+# The config is embedded verbatim inside a Swift multi-line string literal.
+# A backslash would be reinterpreted as a Swift escape sequence and `"""`
+# would terminate the literal early — either silently corrupts the embedded
+# copy, and the CI drift check cannot catch it (the generated *source* still
+# matches; the *runtime string* doesn't). Refuse to embed such configs.
+if grep -q '\\' "$CONFIG"; then
+    echo "error: $CONFIG contains a backslash, which Swift would reinterpret as an escape sequence inside the embedded string literal" >&2
+    exit 1
+fi
+if grep -q '"""' "$CONFIG"; then
+    echo "error: $CONFIG contains \"\"\", which would terminate the embedded Swift string literal early" >&2
+    exit 1
+fi
+
 # Build the indented payload: Swift `"""` multi-line literals strip common
 # leading whitespace based on the closing delimiter's column, so every line
 # in the payload needs to be indented at least 4 spaces to match `    """`.

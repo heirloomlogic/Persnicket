@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Xcode plugin variants now lint/format each target's own Swift source files instead of recursively
+  processing the entire project directory. This stops Persnipe from rewriting vendored or generated
+  Swift code the project doesn't own, and stops Persnoop from re-linting the whole project once per
+  attached target.
+- `Persnipe` now supports `--target <name>` (repeatable) to limit formatting to specific targets,
+  and rejects unrecognized arguments instead of silently ignoring them.
+- `Persnoop` now filters target files to `.source` type, matching `Persnipe`'s behavior.
+
+### Added
+
+- CI: the Linux job now compile-checks the plugins via the `Examples/CompileCheck` fixture, so the
+  Linux-only discovery code paths are built on every PR.
+- CI: workflow `GITHUB_TOKEN` restricted to `contents: read`.
+- `bin/regenerate-embedded-fallback` refuses to run if `.swift-format` contains a backslash or
+  `"""`, either of which would silently corrupt the embedded Swift string literal.
+
+### Fixed
+
+- README documents that Persnoop reports violations as build warnings (it never fails the build),
+  that linting is skipped with a warning on config/toolchain mismatch, and that `ci-lint-setup`
+  overwrites the installed problem matcher.
+- CHANGELOG version links.
+
 ## [2.0.1] - 2026-05-28
 
 ### Changed
@@ -118,8 +145,8 @@ Consumers must update `Package.swift`:
 - Xcode project integration for both plugins (macOS).
 - Embedded fallback configuration for projects without a `.swift-format` file.
 
-[Unreleased]: https://github.com/HeirloomLogic/Persnicket/compare/2.1.0...HEAD
-[2.1.0]: https://github.com/HeirloomLogic/Persnicket/compare/2.0.0...2.1.0
+[Unreleased]: https://github.com/HeirloomLogic/Persnicket/compare/2.0.1...HEAD
+[2.0.1]: https://github.com/HeirloomLogic/Persnicket/compare/2.0.0...2.0.1
 [2.0.0]: https://github.com/HeirloomLogic/Persnicket/compare/1.6.2...2.0.0
 [1.6.2]: https://github.com/HeirloomLogic/Persnicket/compare/1.6.1...1.6.2
 [1.6.1]: https://github.com/HeirloomLogic/Persnicket/compare/1.6.0...1.6.1

@@ -15,7 +15,7 @@ A lightweight SPM plugin that lints and formats Swift source files. Its only dep
 
 | Plugin | Type | What it does |
 |---|---|---|
-| **Persnoop** | Build Tool | Runs `swift-format lint` automatically on every build as a pre-build step. |
+| **Persnoop** | Build Tool | Runs `swift-format lint` automatically on every build as a pre-build step. Violations appear as build warnings. |
 | **Persnipe** | Command | Runs `swift-format format --in-place` on demand to reformat source files. |
 
 Both plugins work with Swift Package Manager. On macOS, Xcode project integration is also supported.
@@ -53,6 +53,8 @@ Apply the plugin to any target you want linted on every build:
 )
 ```
 
+Lint violations are reported as **build warnings** — they show up inline in Xcode and in `swift build` output, but they do not fail the build. (`swift-format lint` only exits non-zero in `--strict` mode, and a failing pre-build step would block compilation entirely.) If you want violations to *fail* a build, run `swift-format lint --strict` directly in CI — see [CI](#ci) below.
+
 If your package is itself consumed as a dependency, applying Persnoop pulls Persnicket into your consumers' dependency graph too. See [DEV-TOOLING.md](DEV-TOOLING.md) to gate it out so only your own builds run the linter.
 
 ### Command Plugin (on-demand formatting)
@@ -64,6 +66,12 @@ swift package plugin --allow-writing-to-package-directory format-source-code
 ```
 
 The plugin runs silently on success — use `git diff` to see what changed.
+
+To format only specific targets, pass `--target` (repeatable):
+
+```bash
+swift package plugin --allow-writing-to-package-directory format-source-code --target MyTarget
+```
 
 In Xcode: **right-click your project or package → Persnipe**.
 
@@ -130,12 +138,15 @@ On Linux, install Swift with `swift-actions/setup-swift@v2` before the setup ste
 
 - Inline annotations on the PR "Files changed" tab only show for lines that are part of the diff. Violations on unchanged lines still appear in the workflow run summary.
 - GitHub caps workflow-command annotations at 10 errors and 10 warnings shown inline per run; the remainder are listed in the run summary. For typical PRs this is fine — for a first-time lint sweep across a large codebase, run `swift-format lint` locally for the full list.
+- `ci-lint-setup` refreshes `.github/swift-format-matcher.json` from this package on every run. If you've customized that file, your changes will be overwritten — rename your copy and register it with your own `::add-matcher::` command instead.
 
 ## Toolchain Compatibility
 
 Match the Swift toolchain on your CI runner to the one on your development machine. Major.minor must align; patch should not matter.
 
 The `swift-format` configuration format has previously shipped breaking changes without a version bump. A `.swift-format` file that parses cleanly under one Swift minor version may fail under another. If local dev and CI drift, you could see lint failures that can't be reproduced locally.
+
+When the plugin detects that the active toolchain's `swift-format` cannot parse the configuration, it emits a warning and **skips linting rather than failing the build**. Keep an eye out for the `linting skipped` warning — a passing build does not guarantee the linter actually ran.
 
 When using `swift-actions/setup-swift@v2` on Linux, the action may install an older default Swift if `swift-version` is omitted. This can produce a `swift-format cannot parse the configuration — linting skipped` warning, although the build succeeds. Pin the version to match your project:
 
