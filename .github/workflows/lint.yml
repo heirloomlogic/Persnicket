@@ -5,6 +5,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   swift-format-lint:
     name: swift-format (strict)
@@ -53,3 +56,9 @@ jobs:
 
       - name: Lint (strict)
         run: swift-format lint --strict --parallel --recursive --configuration .swift-format Plugins/
+
+      - name: Compile-check plugins via consumer fixture
+        working-directory: Examples/CompileCheck
+        run: |
+          swift build
+          swift package plugin --allow-writing-to-package-directory format-source-code

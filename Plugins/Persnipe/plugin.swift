@@ -7,6 +7,26 @@ struct Persnipe: CommandPlugin {
         context: PluginContext,
         arguments: [String]
     ) throws {
+        var argumentExtractor = ArgumentExtractor(arguments)
+        let targetNames = argumentExtractor.extractOption(named: "target")
+        let unrecognized = argumentExtractor.remainingArguments
+        guard unrecognized.isEmpty else {
+            let message =
+                """
+                Unrecognized arguments: \(unrecognized.joined(separator: " ")). \
+                Persnipe accepts --target <name> (repeatable) to limit formatting to specific targets.
+                """
+            Diagnostics.error(message)
+            throw PluginError(message: message)
+        }
+
+        let requestedTargets: [Target]
+        if targetNames.isEmpty {
+            requestedTargets = context.package.targets
+        } else {
+            requestedTargets = try context.package.targets(named: targetNames)
+        }
+
         let launcher = swiftFormatLauncher()
 
         let configPath = try resolveConfiguration(
@@ -17,7 +37,7 @@ struct Persnipe: CommandPlugin {
 
         logSwiftFormatVersion(launcher: launcher)
 
-        for target in context.package.targets {
+        for target in requestedTargets {
             guard let sourceModule = target as? SourceModuleTarget else {
                 Diagnostics.remark(
                     "Skipping target \"\(target.name)\" because it is not a source module."
