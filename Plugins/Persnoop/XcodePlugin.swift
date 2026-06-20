@@ -41,6 +41,9 @@ extension Persnoop: XcodeBuildToolPlugin {
                 "--parallel",
                 "--configuration", configPath,
             ]
+        if strictModeEnabled(projectRoot: context.xcodeProject.directoryURL) {
+            arguments.append("--strict")
+        }
         for file in swiftFiles {
             arguments.append(file.url.path(percentEncoded: false))
         }

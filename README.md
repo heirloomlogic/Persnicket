@@ -53,7 +53,16 @@ Apply the plugin to any target you want linted on every build:
 )
 ```
 
-Lint violations are reported as **build warnings** — they show up inline in Xcode and in `swift build` output, but they do not fail the build. (`swift-format lint` only exits non-zero in `--strict` mode, and a failing pre-build step would block compilation entirely.) If you want violations to *fail* a build, run `swift-format lint --strict` directly in CI — see [CI](#ci) below.
+Lint violations are reported as **build warnings** — they show up inline in Xcode and in `swift build` output, but they do not fail the build. (`swift-format lint` only exits non-zero in `--strict` mode, and a failing pre-build step would block compilation entirely.) If you want violations to *fail* a build, either run `swift-format lint --strict` directly in CI (see [CI](#ci) below) or opt into the plugin's strict mode:
+
+#### Strict mode (opt-in)
+
+To make Persnoop *fail* the build on a violation, opt in with either:
+
+- the **`PERSNICKET_STRICT`** environment variable set to `1`, `true`, or `yes` — convenient for CI and `swift build`; or
+- a **`.persnicket-strict`** file in your project root (`touch .persnicket-strict`). Unlike the environment variable, this is visible to **Xcode GUI builds**, which don't inherit your shell environment.
+
+When either is present, Persnoop passes `--strict` to `swift-format lint`, so violations exit non-zero. Because this is a pre-build step, a violation **halts the build before compilation** — so it's best kept CI-only, or committed as `.persnicket-strict` only when your whole team wants hard local enforcement. Toggling either trigger takes effect on the next `swift build` (no cache reset needed; in Xcode, rebuild after changing it). Strict mode is off by default.
 
 If your package is itself consumed as a dependency, applying Persnoop pulls Persnicket into your consumers' dependency graph too. See [DEV-TOOLING.md](DEV-TOOLING.md) to gate it out so only your own builds run the linter.
 

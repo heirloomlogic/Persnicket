@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Persnoop` gained an opt-in **strict mode**: set the `PERSNICKET_STRICT` environment variable
+  (`1`/`true`/`yes`) or create a `.persnicket-strict` file in the project root, and Persnoop passes
+  `--strict` to `swift-format lint` so violations fail the build. Off by default — the plugin
+  remains warnings-only unless you opt in.
 - CI: the Linux job now compile-checks the plugins via the `Examples/CompileCheck` fixture, so the
   Linux-only discovery code paths are built on every PR.
 - CI: workflow `GITHUB_TOKEN` restricted to `contents: read`.
