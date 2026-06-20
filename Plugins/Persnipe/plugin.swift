@@ -435,6 +435,35 @@ struct Persnipe: CommandPlugin {
             """
         )
     }
+
+    // MARK: Strict Mode
+
+    /// Whether Persnoop should pass `--strict` to `swift-format lint`, which makes
+    /// lint violations exit non-zero and halt the build before compilation.
+    ///
+    /// Opt in with either the `PERSNICKET_STRICT` environment variable set to `1`,
+    /// `true`, or `yes` (case-insensitive), or a `.persnicket-strict` sentinel file
+    /// in the project root. The environment variable is convenient for CI and
+    /// `swift build`, but is not visible to Xcode GUI builds, which do not inherit
+    /// the shell environment; the sentinel file works everywhere.
+    func strictModeEnabled(projectRoot: URL) -> Bool {
+        let sentinel = projectRoot.appendingPathComponent(".persnicket-strict")
+        if FileManager.default.fileExists(atPath: sentinel.path) {
+            Diagnostics.remark(
+                "Persnoop strict mode enabled (.persnicket-strict) — lint violations will fail the build."
+            )
+            return true
+        }
+        if let value = ProcessInfo.processInfo.environment["PERSNICKET_STRICT"]?.lowercased(),
+            ["1", "true", "yes"].contains(value)
+        {
+            Diagnostics.remark(
+                "Persnoop strict mode enabled (PERSNICKET_STRICT) — lint violations will fail the build."
+            )
+            return true
+        }
+        return false
+    }
 }
 
 /// How to launch `swift-format` on the current host.

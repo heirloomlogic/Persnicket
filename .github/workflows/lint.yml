@@ -41,6 +41,20 @@ jobs:
           swift build
           swift package plugin --allow-writing-to-package-directory format-source-code
 
+      - name: Verify Persnoop strict mode fails on violations
+        working-directory: Examples/CompileCheck
+        run: |
+          set -eu
+          printf 'print("hello, world")\nlet value = Int("1")!\nprint(value)\n' > Sources/CompileCheck/main.swift
+          rm -rf .build
+          if PERSNICKET_STRICT=1 swift build; then
+            echo "::error::strict mode did not fail the build on a lint violation"
+            git checkout -- Sources/CompileCheck/main.swift
+            exit 1
+          fi
+          git checkout -- Sources/CompileCheck/main.swift
+          echo "ok: strict mode failed the build as expected"
+
   swift-format-lint-linux:
     name: swift-format (Linux, downstream-style)
     runs-on: ubuntu-latest
@@ -62,3 +76,17 @@ jobs:
         run: |
           swift build
           swift package plugin --allow-writing-to-package-directory format-source-code
+
+      - name: Verify Persnoop strict mode fails on violations
+        working-directory: Examples/CompileCheck
+        run: |
+          set -eu
+          printf 'print("hello, world")\nlet value = Int("1")!\nprint(value)\n' > Sources/CompileCheck/main.swift
+          rm -rf .build
+          if PERSNICKET_STRICT=1 swift build; then
+            echo "::error::strict mode did not fail the build on a lint violation"
+            git checkout -- Sources/CompileCheck/main.swift
+            exit 1
+          fi
+          git checkout -- Sources/CompileCheck/main.swift
+          echo "ok: strict mode failed the build as expected"
