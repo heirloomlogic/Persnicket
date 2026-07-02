@@ -8,12 +8,16 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   swift-format-lint:
     name: swift-format (strict)
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Log toolchain versions
         run: |
@@ -29,11 +33,22 @@ jobs:
       - name: Verify shared plugin infrastructure is identical
         run: ./bin/check-shared-plugin-code
 
+      # `swift build` never compiles the `#if canImport(XcodeProjectPlugin)` code —
+      # the CLI toolchain's PluginAPI doesn't ship that module — so the Xcode plugin
+      # variants would otherwise be verified by nothing.
+      - name: Typecheck Xcode plugin variants
+        run: |
+          API="$(xcode-select -p)/../SharedFrameworks/SwiftPM.framework/Versions/A/SharedSupport/PluginAPI"
+          xcrun swiftc -typecheck -parse-as-library -I "$API" -package-description-version 6.0 \
+              Plugins/Persnoop/plugin.swift Plugins/Persnoop/XcodePlugin.swift
+          xcrun swiftc -typecheck -parse-as-library -I "$API" -package-description-version 6.0 \
+              Plugins/Persnipe/plugin.swift Plugins/Persnipe/XcodePlugin.swift
+
       - name: Setup swift-format lint
         run: ./bin/ci-lint-setup
 
       - name: Lint (strict)
-        run: xcrun swift-format lint --strict --parallel --recursive --configuration .swift-format Plugins/
+        run: xcrun swift-format lint --strict --parallel --recursive --configuration .swift-format Plugins/ Examples/
 
       - name: Compile-check plugins via consumer fixture
         working-directory: Examples/CompileCheck
@@ -41,17 +56,40 @@ jobs:
           swift build
           swift package plugin --allow-writing-to-package-directory format-source-code
 
+      - name: Verify Persnipe reformats and --target scoping works
+        working-directory: Examples/CompileCheck
+        run: |
+          set -eu
+          printf 'print( "hello, world" )\n' > Sources/CompileCheck/main.swift
+          swift package plugin --allow-writing-to-package-directory format-source-code --target CompileCheck
+          if grep -q 'print( "hello, world" )' Sources/CompileCheck/main.swift; then
+            echo "::error::Persnipe did not reformat a deliberately misformatted file"
+            git checkout -- Sources/CompileCheck/main.swift
+            exit 1
+          fi
+          grep -q 'print("hello, world")' Sources/CompileCheck/main.swift
+          git checkout -- Sources/CompileCheck/main.swift
+          echo "ok: Persnipe reformatted the file via --target"
+
       - name: Verify Persnoop strict mode fails on violations
         working-directory: Examples/CompileCheck
         run: |
           set -eu
           printf 'print("hello, world")\nlet value = Int("1")!\nprint(value)\n' > Sources/CompileCheck/main.swift
           rm -rf .build
-          if PERSNICKET_STRICT=1 swift build; then
+          if PERSNICKET_STRICT=1 swift build > build.log 2>&1; then
+            cat build.log
             echo "::error::strict mode did not fail the build on a lint violation"
             git checkout -- Sources/CompileCheck/main.swift
             exit 1
           fi
+          cat build.log
+          if ! grep -q 'NeverForceUnwrap' build.log; then
+            echo "::error::build failed for a reason other than the expected NeverForceUnwrap violation"
+            git checkout -- Sources/CompileCheck/main.swift
+            exit 1
+          fi
+          rm -f build.log
           git checkout -- Sources/CompileCheck/main.swift
           echo "ok: strict mode failed the build as expected"
 
@@ -59,9 +97,9 @@ jobs:
     name: swift-format (Linux, downstream-style)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
-      - uses: swift-actions/setup-swift@v2
+      - uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a # v2.4.0
         with:
           swift-version: "6.2"
 
@@ -69,7 +107,7 @@ jobs:
         run: ./bin/ci-lint-setup
 
       - name: Lint (strict)
-        run: swift-format lint --strict --parallel --recursive --configuration .swift-format Plugins/
+        run: swift-format lint --strict --parallel --recursive --configuration .swift-format Plugins/ Examples/
 
       - name: Compile-check plugins via consumer fixture
         working-directory: Examples/CompileCheck
@@ -77,16 +115,67 @@ jobs:
           swift build
           swift package plugin --allow-writing-to-package-directory format-source-code
 
+      - name: Verify Persnipe reformats and --target scoping works
+        working-directory: Examples/CompileCheck
+        run: |
+          set -eu
+          printf 'print( "hello, world" )\n' > Sources/CompileCheck/main.swift
+          swift package plugin --allow-writing-to-package-directory format-source-code --target CompileCheck
+          if grep -q 'print( "hello, world" )' Sources/CompileCheck/main.swift; then
+            echo "::error::Persnipe did not reformat a deliberately misformatted file"
+            git checkout -- Sources/CompileCheck/main.swift
+            exit 1
+          fi
+          grep -q 'print("hello, world")' Sources/CompileCheck/main.swift
+          git checkout -- Sources/CompileCheck/main.swift
+          echo "ok: Persnipe reformatted the file via --target"
+
+      - name: Verify $SWIFT_FORMAT override handling
+        working-directory: Examples/CompileCheck
+        run: |
+          set -eu
+          rm -rf .build
+          SWIFT_FORMAT=/nonexistent/swift-format swift build > override.log 2>&1 || { cat override.log; exit 1; }
+          grep -q 'not an executable file' override.log
+          rm -rf .build
+          SWIFT_FORMAT=relative/swift-format swift build > override2.log 2>&1 || { cat override2.log; exit 1; }
+          grep -q 'not an absolute path' override2.log
+          rm -f override.log override2.log
+          echo "ok: misconfigured overrides warned and discovery fell back"
+
       - name: Verify Persnoop strict mode fails on violations
         working-directory: Examples/CompileCheck
         run: |
           set -eu
           printf 'print("hello, world")\nlet value = Int("1")!\nprint(value)\n' > Sources/CompileCheck/main.swift
           rm -rf .build
-          if PERSNICKET_STRICT=1 swift build; then
+          if PERSNICKET_STRICT=1 swift build > build.log 2>&1; then
+            cat build.log
             echo "::error::strict mode did not fail the build on a lint violation"
             git checkout -- Sources/CompileCheck/main.swift
             exit 1
           fi
+          cat build.log
+          if ! grep -q 'NeverForceUnwrap' build.log; then
+            echo "::error::build failed for a reason other than the expected NeverForceUnwrap violation"
+            git checkout -- Sources/CompileCheck/main.swift
+            exit 1
+          fi
+          rm -f build.log
           git checkout -- Sources/CompileCheck/main.swift
           echo "ok: strict mode failed the build as expected"
+
+  # The advertised minimum. Newer-toolchain jobs above would not catch uses of
+  # stdlib/Foundation API added after Swift 6.0.
+  swift-6-0-floor:
+    name: Swift 6.0 floor (Linux container)
+    runs-on: ubuntu-latest
+    container: swift:6.0
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Compile-check plugins via consumer fixture
+        working-directory: Examples/CompileCheck
+        run: |
+          swift build
+          swift package plugin --allow-writing-to-package-directory format-source-code
