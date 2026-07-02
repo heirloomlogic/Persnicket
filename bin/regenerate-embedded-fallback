@@ -31,6 +31,24 @@ if grep -q '"""' "$CONFIG"; then
     echo "error: $CONFIG contains \"\"\", which would terminate the embedded Swift string literal early" >&2
     exit 1
 fi
+if grep -q "$(printf '\r')" "$CONFIG"; then
+    echo "error: $CONFIG contains carriage returns (CRLF line endings), which would embed control characters into the Swift literal" >&2
+    exit 1
+fi
+
+# Refuse to touch a plugin file whose literal block is malformed: if the closing
+# `    """` delimiter is missing, the rewrite below would silently drop everything
+# after the opening marker.
+for f in "$FILE_A" "$FILE_B"; do
+    awk '
+        /^private let fallbackConfigJSON = """$/ { found = 1; next }
+        found && /^    """$/ { ok = 1; exit }
+        END { exit ok ? 0 : 1 }
+    ' "$f" || {
+        echo "error: $f: fallbackConfigJSON opening marker and closing delimiter not both found — refusing to rewrite" >&2
+        exit 1
+    }
+done
 
 # Build the indented payload: Swift `"""` multi-line literals strip common
 # leading whitespace based on the closing delimiter's column, so every line
@@ -57,7 +75,10 @@ rewrite() {
         }
         !skip { print }
     ' "$file" > "$tmp"
-    mv "$tmp" "$file"
+    # `cat >` rather than `mv` so the target keeps its original permissions —
+    # mktemp files are 0600.
+    cat "$tmp" > "$file"
+    rm -f "$tmp"
 }
 
 rewrite "$FILE_A"
@@ -66,6 +87,10 @@ rewrite "$FILE_B"
 for f in "$FILE_A" "$FILE_B"; do
     if ! grep -q '^private let fallbackConfigJSON = """$' "$f"; then
         echo "error: marker line not found in $f — the fallbackConfigJSON literal may not have been rewritten" >&2
+        exit 1
+    fi
+    if ! grep -q '^    """$' "$f"; then
+        echo "error: closing delimiter not found in $f after rewrite — the file may have been truncated" >&2
         exit 1
     fi
 done
