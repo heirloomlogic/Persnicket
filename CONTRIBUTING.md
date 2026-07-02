@@ -45,11 +45,17 @@ The GitHub Actions workflow (`.github/workflows/lint.yml`) runs on every PR and 
 
 1. Regenerates the embedded fallback literals and verifies there is no diff (macOS).
 2. Verifies shared plugin infrastructure is identical across both plugin targets (macOS).
-3. Runs `swift-format lint --strict` on the plugin source (macOS and Linux).
-4. Compile-checks the plugins via the `Examples/CompileCheck` consumer fixture and runs the
+3. Typechecks the `#if canImport(XcodeProjectPlugin)` Xcode plugin variants against Xcode's
+   PluginAPI (macOS) — `swift build` never compiles them, so this is their only verification.
+4. Runs `swift-format lint --strict` on the plugin source and the example fixture (macOS and Linux).
+5. Compile-checks the plugins via the `Examples/CompileCheck` consumer fixture and runs the
    `Persnipe` command plugin against it (macOS and Linux — the Linux build covers the
-   `#if !os(macOS)` discovery code paths).
-5. Verifies `Persnoop`'s opt-in strict mode fails the build on a lint violation (macOS and Linux).
+   `#if !os(macOS)` discovery code paths), asserting that Persnipe actually reformats a
+   misformatted file and that `--target` scoping works.
+6. Verifies `Persnoop`'s opt-in strict mode fails the build on a lint violation, and that the
+   failure is the expected violation (macOS and Linux).
+7. Verifies misconfigured `$SWIFT_FORMAT` overrides warn and fall back to discovery (Linux).
+8. Builds the consumer fixture on a `swift:6.0` container — the advertised minimum toolchain.
 
 All checks must pass before merge.
 
