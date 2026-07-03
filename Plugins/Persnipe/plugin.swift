@@ -148,12 +148,15 @@ struct Persnipe: CommandPlugin {
 
     /// Resolves how to invoke `swift-format` on the current platform.
     ///
-    /// **macOS:** dispatches through `/usr/bin/xcrun` so the binary tracks the active
-    /// Xcode toolchain.
+    /// On every platform, an absolute, executable `$SWIFT_FORMAT` takes precedence —
+    /// the escape hatch for custom toolchains or non-standard layouts.
     ///
-    /// **Linux:** auto-discovers the toolchain's `swift-format` so downstream consumers
-    /// don't have to symlink it into `/usr/local/bin` from CI. See `resolveLinuxSwiftFormatPath`
-    /// for the search order.
+    /// **macOS:** otherwise dispatches through `/usr/bin/xcrun` so the binary tracks
+    /// the active Xcode toolchain.
+    ///
+    /// **Linux:** otherwise auto-discovers the toolchain's `swift-format` so downstream
+    /// consumers don't have to symlink it into `/usr/local/bin` from CI. See
+    /// `resolveLinuxSwiftFormatPath` for the search order.
     ///
     /// If Linux discovery fails, emits a `Diagnostics.error` listing the searched paths
     /// and returns a `/usr/bin/env swift-format` placeholder launcher. In a build-tool
@@ -161,6 +164,12 @@ struct Persnipe: CommandPlugin {
     /// plugin the placeholder is what ultimately fails to launch. Either way, the error
     /// above the failure explains why.
     func swiftFormatLauncher() -> SwiftFormatLauncher {
+        if let override = swiftFormatOverridePath() {
+            return SwiftFormatLauncher(
+                executable: URL(fileURLWithPath: override),
+                leadingArguments: []
+            )
+        }
         #if os(macOS)
         return SwiftFormatLauncher(
             executable: URL(fileURLWithPath: "/usr/bin/xcrun"),
@@ -196,32 +205,56 @@ struct Persnipe: CommandPlugin {
         #endif
     }
 
+    /// Returns the `$SWIFT_FORMAT` override — an absolute path to a `swift-format`
+    /// binary — honored on **every** platform, including macOS where it takes
+    /// precedence over `xcrun swift-format`. Returns nil when it is unset or empty,
+    /// not absolute, or not an executable regular file; in the latter two cases it
+    /// warns and lets the caller fall through to the platform default.
+    private func swiftFormatOverridePath() -> String? {
+        guard let override = ProcessInfo.processInfo.environment["SWIFT_FORMAT"],
+            !override.isEmpty
+        else {
+            return nil
+        }
+        if !override.hasPrefix("/") {
+            Diagnostics.warning(
+                """
+                $SWIFT_FORMAT is set to "\(override)", which is not an absolute path — \
+                ignoring it and falling back to the default toolchain swift-format. Set it \
+                to an absolute path such as /usr/bin/swift-format.
+                """
+            )
+            return nil
+        }
+        if isExecutableRegularFile(override) {
+            return override
+        }
+        Diagnostics.warning(
+            """
+            $SWIFT_FORMAT is set to "\(override)" but it is not an executable file. \
+            Falling back to the default toolchain swift-format.
+            """
+        )
+        return nil
+    }
+
+    /// Whether `path` is an executable *regular file*. `FileManager.isExecutableFile`
+    /// alone returns `true` for searchable directories (access(2) `X_OK`), so a
+    /// directory named `swift-format` would otherwise pass discovery.
+    private func isExecutableRegularFile(_ path: String) -> Bool {
+        let fm = FileManager.default
+        var isDirectory: ObjCBool = false
+        return fm.isExecutableFile(atPath: path)
+            && fm.fileExists(atPath: path, isDirectory: &isDirectory)
+            && !isDirectory.boolValue
+    }
+
     #if !os(macOS)
     /// Walks the Linux discovery chain and returns the first executable swift-format
-    /// it finds, or nil if no candidate exists.
+    /// it finds, or nil if no candidate exists. The `$SWIFT_FORMAT` override is applied
+    /// earlier by `swiftFormatOverridePath`, so it is not repeated here.
     private func resolveLinuxSwiftFormatPath() -> String? {
         let env = ProcessInfo.processInfo.environment
-
-        if let override = env["SWIFT_FORMAT"], !override.isEmpty {
-            if !override.hasPrefix("/") {
-                Diagnostics.warning(
-                    """
-                    $SWIFT_FORMAT is set to "\(override)", which is not an absolute path — \
-                    ignoring it and falling back to toolchain discovery. Set it to an \
-                    absolute path such as /usr/bin/swift-format.
-                    """
-                )
-            } else if isExecutableRegularFile(override) {
-                return override
-            } else {
-                Diagnostics.warning(
-                    """
-                    $SWIFT_FORMAT is set to "\(override)" but it is not an executable file. \
-                    Falling back to toolchain discovery.
-                    """
-                )
-            }
-        }
 
         if let swiftDir = directoryContainingExecutable(named: "swift", env: env) {
             let sibling = swiftDir + "/swift-format"
@@ -262,17 +295,6 @@ struct Persnipe: CommandPlugin {
             }
         }
         return nil
-    }
-
-    /// Whether `path` is an executable *regular file*. `FileManager.isExecutableFile`
-    /// alone returns `true` for searchable directories (access(2) `X_OK`), so a
-    /// directory named `swift-format` would otherwise pass discovery.
-    private func isExecutableRegularFile(_ path: String) -> Bool {
-        let fm = FileManager.default
-        var isDirectory: ObjCBool = false
-        return fm.isExecutableFile(atPath: path)
-            && fm.fileExists(atPath: path, isDirectory: &isDirectory)
-            && !isDirectory.boolValue
     }
     #endif
 
@@ -372,15 +394,32 @@ struct Persnipe: CommandPlugin {
 
     // MARK: Preflight Probe
 
-    /// Runs swift-format against a trivial file to verify the config is parseable.
+    /// Runs swift-format against a trivial file to verify the config is parseable,
+    /// caching a successful verdict so unchanged incremental builds pay nothing.
     ///
-    /// This catches config/toolchain mismatches before SPM's prebuild command
-    /// runs — where a non-zero exit would fail the build.
+    /// This catches config/toolchain mismatches before SPM's prebuild command runs —
+    /// where a non-zero exit would fail the build. The verdict is cached in the
+    /// persistent per-target work directory, keyed on the config bytes and the resolved
+    /// toolchain; on a cache hit the probe subprocess is skipped entirely. Only `.ok`
+    /// is cached — a failing config or missing binary re-probes every build so the
+    /// diagnostic keeps surfacing (and, in strict mode, keeps failing) until it is fixed.
     func probeSwiftFormat(
         launcher: SwiftFormatLauncher,
         configPath: String,
         pluginWorkDirectory: URL
     ) -> ProbeResult {
+        let cacheURL = pluginWorkDirectory.appendingPathComponent("preflight-cache.v1")
+        let cacheKey = preflightCacheKey(configPath: configPath, launcher: launcher)
+        if let cacheKey,
+            let cached = try? String(contentsOf: cacheURL, encoding: .utf8),
+            cached == cacheKey
+        {
+            Diagnostics.remark(
+                "swift-format preflight: config and toolchain unchanged since last check — skipping probe."
+            )
+            return .ok
+        }
+
         let probeFile = pluginWorkDirectory.appendingPathComponent("_swift_format_probe.swift")
         do {
             try "// probe\n".write(to: probeFile, atomically: true, encoding: .utf8)
@@ -414,6 +453,9 @@ struct Persnipe: CommandPlugin {
             process.waitUntilExit()
 
             guard process.terminationStatus != EXIT_SUCCESS else {
+                if let cacheKey {
+                    try? cacheKey.write(to: cacheURL, atomically: true, encoding: .utf8)
+                }
                 return .ok
             }
 
@@ -450,6 +492,48 @@ struct Persnipe: CommandPlugin {
             )
             return .ok
         }
+    }
+
+    /// A cheap, subprocess-free fingerprint of everything that changes the probe
+    /// verdict: the config's bytes and the resolved toolchain. Returns nil when the
+    /// config cannot be read, which forces the probe to run.
+    private func preflightCacheKey(configPath: String, launcher: SwiftFormatLauncher) -> String? {
+        guard let configData = try? Data(contentsOf: URL(fileURLWithPath: configPath)) else {
+            return nil
+        }
+        var parts = [
+            "config:\(configData.count):\(stableHash(configData))",
+            "exec:\(launcher.displayCommand)",
+        ]
+        #if os(macOS)
+        // `xcrun` dispatches to the active Xcode, so the executable path alone can't
+        // see a toolchain switch; the xcode-select symlink target catches it without
+        // spawning a process.
+        if let developerDir = try? FileManager.default.destinationOfSymbolicLink(
+            atPath: "/var/db/xcode_select_link"
+        ) {
+            parts.append("xcode:\(developerDir)")
+        }
+        #else
+        // On Linux the launcher points straight at the binary, so its size and mtime
+        // fingerprint a toolchain swap.
+        if let attributes = try? FileManager.default.attributesOfItem(atPath: launcher.executable.path) {
+            let size = (attributes[.size] as? Int) ?? -1
+            let mtime = (attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+            parts.append("bin:\(size):\(mtime)")
+        }
+        #endif
+        return parts.joined(separator: "|")
+    }
+
+    /// A deterministic djb2 hash. `Hasher` is unsuitable here — it is seeded per
+    /// process, so its output would differ between builds and never cache-hit.
+    private func stableHash(_ data: Data) -> UInt64 {
+        var hash: UInt64 = 5381
+        for byte in data {
+            hash = (hash &* 33) &+ UInt64(byte)
+        }
+        return hash
     }
 
     /// Emits a diagnostic when the preflight probe detects a config/toolchain
