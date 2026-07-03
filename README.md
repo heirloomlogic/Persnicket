@@ -24,7 +24,9 @@ Both plugins work with Swift Package Manager. On macOS, Xcode project integratio
 
 - **Swift 6.0+** toolchain that includes `swift-format`
 - **macOS**: Xcode 16+ (the plugin invokes `swift-format` via `xcrun`)
-- **Linux**: The plugin auto-discovers `swift-format` from the active Swift toolchain. Set `$SWIFT_FORMAT` to an absolute path to override.
+- **Linux**: The plugin auto-discovers `swift-format` from the active Swift toolchain.
+
+On **either platform**, set `$SWIFT_FORMAT` to an absolute path to a `swift-format` binary to override the default — the escape hatch for custom toolchains or non-standard layouts.
 
 The plugin can lint and format targets for any Apple platform (iOS, tvOS, watchOS, visionOS) — it runs on the host machine during the build.
 
@@ -182,9 +184,11 @@ When using `swift-actions/setup-swift@v2` on Linux, the action may install an ol
 
 ## How It Works
 
-On **macOS**, the plugins invoke `swift-format` via `/usr/bin/xcrun`, which resolves to the binary in your active Xcode toolchain.
+On **every platform**, an absolute, executable `$SWIFT_FORMAT` is honored first — if it points at a runnable binary it wins; if it's set but relative or not executable, the plugin warns and falls back to the platform default.
 
-On **Linux**, the plugins auto-discover `swift-format` from the active Swift toolchain. Search order:
+Otherwise, on **macOS**, the plugins invoke `swift-format` via `/usr/bin/xcrun`, which resolves to the binary in your active Xcode toolchain.
+
+Otherwise, on **Linux**, the plugins auto-discover `swift-format` from the active Swift toolchain. Search order:
 
 1. `$SWIFT_FORMAT` environment variable, if set to an absolute path (relative values are ignored with a warning).
 2. Sibling of `swift` on `$PATH` — Swift toolchains ship `swift-format` in the same `bin` directory as `swift`. This is the canonical location and matches what `dirname $(which swift)/swift-format` would produce. If `swift` is a symlink (e.g. `update-alternatives`), the plugin also checks beside its resolved target.
@@ -192,6 +196,8 @@ On **Linux**, the plugins auto-discover `swift-format` from the active Swift too
 4. `swift-format` directly on `$PATH`.
 
 This means consumers don't need to symlink the binary into `/usr/local/bin` from CI — runners using the official Swift toolchain (e.g. `swift-actions/setup-swift`, the `swift:*` Docker images) work out of the box. If discovery fails, the plugin emits a clear error listing every path it checked instead of failing with a cryptic `env: 'swift-format': No such file or directory`.
+
+Before linting, Persnoop runs a one-off **preflight probe** — it lints a trivial throwaway file to confirm the active toolchain can parse your config, so a config/toolchain mismatch surfaces as a skipped-lint warning (or, in strict mode, a build failure) rather than a cryptic prebuild error. The probe verdict is cached per config and toolchain in the plugin work directory, so unchanged incremental builds don't re-run it — only a `.ok` verdict is cached, so a broken config keeps re-probing until it's fixed.
 
 The approach buys a few properties:
 
