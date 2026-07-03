@@ -62,7 +62,14 @@ To make Persnoop *fail* the build on a violation, opt in with either:
 - the **`PERSNICKET_STRICT`** environment variable set to `1`, `true`, or `yes` — convenient for CI and `swift build`; or
 - a **`.persnicket-strict`** file in your project root (`touch .persnicket-strict`). Unlike the environment variable, this is visible to **Xcode GUI builds**, which don't inherit your shell environment.
 
-When either is present, Persnoop passes `--strict` to `swift-format lint`, so violations exit non-zero. Because this is a pre-build step, a violation **halts the build before compilation** — so it's best kept CI-only, or committed as `.persnicket-strict` only when your whole team wants hard local enforcement. Toggling either trigger takes effect on the next `swift build` (no cache reset needed; in Xcode, rebuild after changing it). Strict mode is off by default.
+When either is present, Persnoop passes `--strict` to `swift-format lint`, so violations exit non-zero. Because this is a pre-build step, a violation **halts the build before compilation** — so it's best kept CI-only, or committed as `.persnicket-strict` only when your whole team wants hard local enforcement. Strict mode is off by default.
+
+Strict mode also hardens the failure path: when `swift-format` can't parse the configuration or is missing from the toolchain, Persnoop normally warns and skips linting (see [Toolchain Compatibility](#toolchain-compatibility)) — but in strict mode it **fails the build** instead, so a broken setup can't silently disable the gate you opted into.
+
+A few sharp edges:
+
+- **Precedence**: the `.persnicket-strict` sentinel wins — when it's present, `PERSNICKET_STRICT=0` cannot turn strict mode off. Unrecognized `PERSNICKET_STRICT` values are treated as off, with a warning.
+- **Toggling**: takes effect on the next `swift build`. Xcode caches plugin build planning, so a toggle may not register until the next re-plan — if a rebuild doesn't pick it up, clean the build folder (Product → Clean Build Folder) and build again.
 
 If your package is itself consumed as a dependency, applying Persnoop pulls Persnicket into your consumers' dependency graph too. See [DEV-TOOLING.md](DEV-TOOLING.md) to gate it out so only your own builds run the linter.
 
@@ -95,6 +102,8 @@ If no `.swift-format` file is present, the plugin falls back to a default config
 - `NeverForceUnwrap`, `NeverUseForceTry`, and `NeverUseImplicitlyUnwrappedOptionals`
 - `AllPublicDeclarationsHaveDocumentation`
 - `FileScopedDeclarationPrivacy` set to `private`
+
+The plugin always passes the resolved configuration to `swift-format` explicitly, which disables `swift-format`'s own per-directory config discovery: **only the project-root `.swift-format` applies**. A nested `.swift-format` in a subdirectory (which bare `swift-format` would pick up per-file) is ignored.
 
 To use your own configuration, create a `.swift-format` file in the root of your project. You can generate a starter configuration with the following:
 
@@ -148,6 +157,9 @@ On Linux, install Swift with `swift-actions/setup-swift@v2` before the setup ste
 - Inline annotations on the PR "Files changed" tab only show for lines that are part of the diff. Violations on unchanged lines still appear in the workflow run summary.
 - GitHub caps workflow-command annotations at 10 errors and 10 warnings shown inline per run; the remainder are listed in the run summary. For typical PRs this is fine — for a first-time lint sweep across a large codebase, run `swift-format lint` locally for the full list.
 - `ci-lint-setup` refreshes `.github/swift-format-matcher.json` from this package on every run. If you've customized that file, your changes will be overwritten — rename your copy and register it with your own `::add-matcher::` command instead.
+- Run `ci-lint-setup` from the workspace root: the runner resolves the `::add-matcher::` path relative to `GITHUB_WORKSPACE`, not the step's `working-directory`.
+- The matcher stays registered for the rest of the job, and its pattern also matches `swiftc` compiler diagnostics from later build steps. If that produces duplicate or mis-attributed annotations, emit `echo "::remove-matcher owner=swift-format::"` after the lint step.
+- The `swift package resolve` approach above executes a script out of a floating dependency checkout. Commit your `Package.resolved` so the checkout is pinned to a version you've reviewed.
 
 ## Toolchain Compatibility
 
@@ -155,7 +167,10 @@ Match the Swift toolchain on your CI runner to the one on your development machi
 
 The `swift-format` configuration format has previously shipped breaking changes without a version bump. A `.swift-format` file that parses cleanly under one Swift minor version may fail under another. If local dev and CI drift, you could see lint failures that can't be reproduced locally.
 
-When the plugin detects that the active toolchain's `swift-format` cannot parse the configuration, it emits a warning and **skips linting rather than failing the build**. Keep an eye out for the `linting skipped` warning — a passing build does not guarantee the linter actually ran.
+When the plugin detects that the active toolchain's `swift-format` cannot parse the configuration (or that the binary is missing entirely), it emits a warning and **skips linting rather than failing the build**. Keep an eye out for the `linting skipped` warning — a passing build does not guarantee the linter actually ran. Two exceptions:
+
+- In [strict mode](#strict-mode-opt-in), these failures **fail the build** instead of skipping — a hard gate shouldn't silently disarm itself.
+- A `.swift-format` that isn't valid JSON at all is always a hard error: that's a problem with your config file, not a toolchain mismatch, and it fails loudly so you can fix it.
 
 When using `swift-actions/setup-swift@v2` on Linux, the action may install an older default Swift if `swift-version` is omitted. This can produce a `swift-format cannot parse the configuration — linting skipped` warning, although the build succeeds. Pin the version to match your project:
 
@@ -171,8 +186,8 @@ On **macOS**, the plugins invoke `swift-format` via `/usr/bin/xcrun`, which reso
 
 On **Linux**, the plugins auto-discover `swift-format` from the active Swift toolchain. Search order:
 
-1. `$SWIFT_FORMAT` environment variable, if set to an absolute path.
-2. Sibling of `swift` on `$PATH` — Swift toolchains ship `swift-format` in the same `bin` directory as `swift`. This is the canonical location and matches what `dirname $(which swift)/swift-format` would produce.
+1. `$SWIFT_FORMAT` environment variable, if set to an absolute path (relative values are ignored with a warning).
+2. Sibling of `swift` on `$PATH` — Swift toolchains ship `swift-format` in the same `bin` directory as `swift`. This is the canonical location and matches what `dirname $(which swift)/swift-format` would produce. If `swift` is a symlink (e.g. `update-alternatives`), the plugin also checks beside its resolved target.
 3. `/usr/local/bin/swift-format` and `/usr/bin/swift-format`.
 4. `swift-format` directly on `$PATH`.
 

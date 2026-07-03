@@ -26,12 +26,20 @@ extension Persnoop: XcodeBuildToolPlugin {
             pluginWorkDirectory: context.pluginWorkDirectoryURL
         )
 
-        if case .configError(let stderr) = probeSwiftFormat(
+        let strict = strictModeEnabled(projectRoot: context.xcodeProject.directoryURL)
+
+        switch probeSwiftFormat(
             launcher: launcher,
             configPath: configPath,
             pluginWorkDirectory: context.pluginWorkDirectoryURL
         ) {
-            emitConfigWarning(launcher: launcher, configPath: configPath, stderr: stderr)
+        case .ok:
+            break
+        case .configError(let stderr):
+            emitConfigFailure(launcher: launcher, configPath: configPath, stderr: stderr, strict: strict)
+            return []
+        case .missingExecutable(let stderr):
+            emitMissingExecutableFailure(launcher: launcher, stderr: stderr, strict: strict)
             return []
         }
 
@@ -41,7 +49,7 @@ extension Persnoop: XcodeBuildToolPlugin {
                 "--parallel",
                 "--configuration", configPath,
             ]
-        if strictModeEnabled(projectRoot: context.xcodeProject.directoryURL) {
+        if strict {
             arguments.append("--strict")
         }
         for file in swiftFiles {

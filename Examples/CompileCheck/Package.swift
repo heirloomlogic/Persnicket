@@ -4,13 +4,13 @@ import PackageDescription
 let package = Package(
     name: "CompileCheck",
     dependencies: [
-        .package(name: "Persnicket", path: "../.."),
+        .package(name: "Persnicket", path: "../..")
     ],
     targets: [
         .executableTarget(
             name: "CompileCheck",
             plugins: [
-                .plugin(name: "Persnoop", package: "Persnicket"),
+                .plugin(name: "Persnoop", package: "Persnicket")
             ]
         )
     ]

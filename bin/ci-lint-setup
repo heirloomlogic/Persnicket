@@ -7,6 +7,12 @@
 #
 # Idempotent and safe to re-run. A project's own .swift-format is never
 # overwritten; the matcher is always refreshed from this package's copy.
+#
+# Run from the workspace root: the runner resolves the ::add-matcher:: path
+# relative to GITHUB_WORKSPACE, not this script's working directory. The
+# matcher stays registered for the rest of the job (its pattern also matches
+# swiftc diagnostics from later build steps); emit
+# `::remove-matcher owner=swift-format::` after the lint step to unregister it.
 set -eu
 
 PKG_ROOT="$(cd "$(dirname "$0")/.." && pwd)"

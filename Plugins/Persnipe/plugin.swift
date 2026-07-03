@@ -14,7 +14,8 @@ struct Persnipe: CommandPlugin {
             let message =
                 """
                 Unrecognized arguments: \(unrecognized.joined(separator: " ")). \
-                Persnipe accepts --target <name> (repeatable) to limit formatting to specific targets.
+                Persnipe accepts --target <name> (repeatable, space-separated — \
+                --target=<name> is not supported) to limit formatting to specific targets.
                 """
             Diagnostics.error(message)
             throw PluginError(message: message)
@@ -45,8 +46,10 @@ struct Persnipe: CommandPlugin {
                 continue
             }
 
-            let sourceFiles = sourceModule.sourceFiles(withSuffix: ".swift")
-            guard !sourceFiles.isEmpty else {
+            let swiftFiles = sourceModule.sourceFiles(withSuffix: ".swift").filter {
+                $0.type == .source && $0.url.pathExtension == "swift"
+            }
+            guard !swiftFiles.isEmpty else {
                 Diagnostics.remark(
                     "Skipping target \"\(target.name)\" because it has no Swift source files."
                 )
@@ -55,7 +58,7 @@ struct Persnipe: CommandPlugin {
 
             try format(
                 launcher: launcher,
-                sourceFiles: sourceFiles,
+                swiftFiles: swiftFiles,
                 targetName: target.name,
                 configPath: configPath
             )
@@ -64,7 +67,7 @@ struct Persnipe: CommandPlugin {
 
     func format(
         launcher: SwiftFormatLauncher,
-        sourceFiles: FileList,
+        swiftFiles: [File],
         targetName: String,
         configPath: String
     ) throws {
@@ -75,10 +78,6 @@ struct Persnipe: CommandPlugin {
                 "--parallel",
                 "--configuration", configPath,
             ]
-
-        let swiftFiles = sourceFiles.filter {
-            $0.type == .source && $0.url.pathExtension == "swift"
-        }
         arguments += swiftFiles.map { $0.url.path(percentEncoded: false) }
 
         let process = Process()
@@ -141,6 +140,11 @@ struct Persnipe: CommandPlugin {
     }
 
     // MARK: - Shared Plugin Infrastructure (must be identical across all plugin targets)
+    //
+    // Some members are used by only one plugin (`logSwiftFormatVersion` only by
+    // Persnipe; `strictModeEnabled`, the probe, and the probe-failure emitters only
+    // by Persnoop) but live here so the section stays byte-identical across both
+    // targets — the accepted cost of SwiftPM's no-shared-plugin-source rule.
 
     /// Resolves how to invoke `swift-format` on the current platform.
     ///
@@ -152,8 +156,10 @@ struct Persnipe: CommandPlugin {
     /// for the search order.
     ///
     /// If Linux discovery fails, emits a `Diagnostics.error` listing the searched paths
-    /// and falls back to `/usr/bin/env swift-format` — which still fails at launch, but
-    /// the error above the failure now explains why.
+    /// and returns a `/usr/bin/env swift-format` placeholder launcher. In a build-tool
+    /// plugin the error diagnostic alone fails the build during planning; in a command
+    /// plugin the placeholder is what ultimately fails to launch. Either way, the error
+    /// above the failure explains why.
     func swiftFormatLauncher() -> SwiftFormatLauncher {
         #if os(macOS)
         return SwiftFormatLauncher(
@@ -194,30 +200,48 @@ struct Persnipe: CommandPlugin {
     /// Walks the Linux discovery chain and returns the first executable swift-format
     /// it finds, or nil if no candidate exists.
     private func resolveLinuxSwiftFormatPath() -> String? {
-        let fm = FileManager.default
         let env = ProcessInfo.processInfo.environment
 
         if let override = env["SWIFT_FORMAT"], !override.isEmpty {
-            if fm.isExecutableFile(atPath: override) {
+            if !override.hasPrefix("/") {
+                Diagnostics.warning(
+                    """
+                    $SWIFT_FORMAT is set to "\(override)", which is not an absolute path — \
+                    ignoring it and falling back to toolchain discovery. Set it to an \
+                    absolute path such as /usr/bin/swift-format.
+                    """
+                )
+            } else if isExecutableRegularFile(override) {
                 return override
+            } else {
+                Diagnostics.warning(
+                    """
+                    $SWIFT_FORMAT is set to "\(override)" but it is not an executable file. \
+                    Falling back to toolchain discovery.
+                    """
+                )
             }
-            Diagnostics.warning(
-                """
-                $SWIFT_FORMAT is set to "\(override)" but it is not an executable file. \
-                Falling back to toolchain discovery.
-                """
-            )
         }
 
         if let swiftDir = directoryContainingExecutable(named: "swift", env: env) {
-            let candidate = swiftDir + "/swift-format"
-            if fm.isExecutableFile(atPath: candidate) {
-                return candidate
+            let sibling = swiftDir + "/swift-format"
+            if isExecutableRegularFile(sibling) {
+                return sibling
+            }
+            // `swift` on $PATH may be a symlink (e.g. update-alternatives) whose
+            // target lives in the real toolchain bin/ next to swift-format.
+            let resolvedDir = URL(fileURLWithPath: swiftDir + "/swift")
+                .resolvingSymlinksInPath()
+                .deletingLastPathComponent()
+                .path
+            let resolvedSibling = resolvedDir + "/swift-format"
+            if resolvedDir != swiftDir, isExecutableRegularFile(resolvedSibling) {
+                return resolvedSibling
             }
         }
 
         for candidate in ["/usr/local/bin/swift-format", "/usr/bin/swift-format"]
-        where fm.isExecutableFile(atPath: candidate) {
+        where isExecutableRegularFile(candidate) {
             return candidate
         }
 
@@ -231,14 +255,24 @@ struct Persnipe: CommandPlugin {
     /// Returns the first directory in `$PATH` containing an executable named `name`.
     private func directoryContainingExecutable(named name: String, env: [String: String]) -> String? {
         guard let pathVar = env["PATH"], !pathVar.isEmpty else { return nil }
-        let fm = FileManager.default
         for component in pathVar.split(separator: ":", omittingEmptySubsequences: true) {
             let dir = String(component)
-            if fm.isExecutableFile(atPath: dir + "/" + name) {
+            if isExecutableRegularFile(dir + "/" + name) {
                 return dir
             }
         }
         return nil
+    }
+
+    /// Whether `path` is an executable *regular file*. `FileManager.isExecutableFile`
+    /// alone returns `true` for searchable directories (access(2) `X_OK`), so a
+    /// directory named `swift-format` would otherwise pass discovery.
+    private func isExecutableRegularFile(_ path: String) -> Bool {
+        let fm = FileManager.default
+        var isDirectory: ObjCBool = false
+        return fm.isExecutableFile(atPath: path)
+            && fm.fileExists(atPath: path, isDirectory: &isDirectory)
+            && !isDirectory.boolValue
     }
     #endif
 
@@ -385,10 +419,17 @@ struct Persnipe: CommandPlugin {
 
             let stderr = String(data: stderrData, encoding: .utf8) ?? ""
             let lower = stderr.lowercased()
+            // xcrun on macOS: "unable to find utility"; /usr/bin/env on Linux:
+            // "No such file or directory". Both mean the binary is missing, which
+            // needs a different remedy than a config/toolchain schema mismatch.
+            if lower.contains("unable to find utility")
+                || lower.contains("no such file or directory")
+            {
+                return .missingExecutable(stderr: stderr)
+            }
             if lower.contains("unable to read configuration")
                 || lower.contains("invalid configuration")
                 || lower.contains("unknown argument")
-                || lower.contains("unable to find utility")
             {
                 return .configError(stderr: stderr)
             }
@@ -411,15 +452,22 @@ struct Persnipe: CommandPlugin {
         }
     }
 
-    /// Emits a detailed warning when the preflight probe detects a config/toolchain
-    /// mismatch, and explains that linting has been skipped.
-    func emitConfigWarning(launcher: SwiftFormatLauncher, configPath: String, stderr: String) {
+    /// Emits a diagnostic when the preflight probe detects a config/toolchain
+    /// mismatch. Non-strict builds get a warning and linting is skipped; strict
+    /// builds get an error — silently skipping the lint would defeat the hard
+    /// gate the user opted into.
+    func emitConfigFailure(
+        launcher: SwiftFormatLauncher,
+        configPath: String,
+        stderr: String,
+        strict: Bool
+    ) {
         var version: Int?
         if case .ok(let v) = validateConfig(at: configPath) { version = v }
         let versionString = version.map(String.init) ?? "unknown"
-        Diagnostics.warning(
-            """
-            swift-format cannot parse the configuration — linting skipped.
+        let outcome = strict ? "failing the build (strict mode)" : "linting skipped"
+        let message = """
+            swift-format cannot parse the configuration — \(outcome).
 
             The active toolchain's swift-format is incompatible with the config schema. \
             This is a CI/toolchain setup issue, not a source code problem.
@@ -433,7 +481,42 @@ struct Persnipe: CommandPlugin {
             • Fix: upgrade the toolchain to match the config schema, or pin \
             the config to an older schema compatible with the active toolchain.
             """
-        )
+        if strict {
+            Diagnostics.error(message)
+        } else {
+            Diagnostics.warning(message)
+        }
+    }
+
+    /// Emits a diagnostic when the preflight probe cannot launch `swift-format`
+    /// at all (missing from the toolchain). Non-strict builds get a warning and
+    /// linting is skipped; strict builds get an error.
+    func emitMissingExecutableFailure(
+        launcher: SwiftFormatLauncher,
+        stderr: String,
+        strict: Bool
+    ) {
+        let outcome = strict ? "failing the build (strict mode)" : "linting skipped"
+        let message = """
+            swift-format could not be launched — \(outcome).
+
+            The `swift-format` binary is missing from the active toolchain. This is a \
+            toolchain/CI setup issue, not a source code or configuration problem.
+
+            --- launcher stderr ---
+            \(stderr.trimmingCharacters(in: .whitespacesAndNewlines))
+            -----------------------
+
+            • executable: \(launcher.displayCommand)
+            • Fix: install a Swift toolchain that bundles swift-format (Swift 6.0+), \
+            or set the SWIFT_FORMAT environment variable to the absolute path of \
+            a swift-format binary.
+            """
+        if strict {
+            Diagnostics.error(message)
+        } else {
+            Diagnostics.warning(message)
+        }
     }
 
     // MARK: Strict Mode
@@ -446,6 +529,9 @@ struct Persnipe: CommandPlugin {
     /// in the project root. The environment variable is convenient for CI and
     /// `swift build`, but is not visible to Xcode GUI builds, which do not inherit
     /// the shell environment; the sentinel file works everywhere.
+    ///
+    /// The sentinel takes precedence: when it is present, the environment variable
+    /// cannot turn strict mode off.
     func strictModeEnabled(projectRoot: URL) -> Bool {
         let sentinel = projectRoot.appendingPathComponent(".persnicket-strict")
         if FileManager.default.fileExists(atPath: sentinel.path) {
@@ -454,13 +540,23 @@ struct Persnipe: CommandPlugin {
             )
             return true
         }
-        if let value = ProcessInfo.processInfo.environment["PERSNICKET_STRICT"]?.lowercased(),
-            ["1", "true", "yes"].contains(value)
-        {
-            Diagnostics.remark(
-                "Persnoop strict mode enabled (PERSNICKET_STRICT) — lint violations will fail the build."
-            )
-            return true
+        if let value = ProcessInfo.processInfo.environment["PERSNICKET_STRICT"] {
+            let normalized = value.lowercased()
+            if ["1", "true", "yes"].contains(normalized) {
+                Diagnostics.remark(
+                    "Persnoop strict mode enabled (PERSNICKET_STRICT) — lint violations will fail the build."
+                )
+                return true
+            }
+            if !normalized.isEmpty, !["0", "false", "no"].contains(normalized) {
+                Diagnostics.warning(
+                    """
+                    PERSNICKET_STRICT is set to "\(value)", which is not a recognized \
+                    value — treating strict mode as off. Use 1, true, or yes to enable \
+                    it; 0, false, no, or unset to disable it.
+                    """
+                )
+            }
         }
         return false
     }
@@ -486,6 +582,7 @@ struct SwiftFormatLauncher {
 enum ProbeResult {
     case ok
     case configError(stderr: String)
+    case missingExecutable(stderr: String)
 }
 
 struct PluginError: Error, CustomStringConvertible {
