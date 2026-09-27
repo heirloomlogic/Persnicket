@@ -34,15 +34,66 @@ struct Persnoop: BuildToolPlugin {
     }
 
     /// Builds the incremental lint commands for one target, shared by the SwiftPM and
-    /// Xcode entry points. Returns no commands — after a diagnostic — when linting
-    /// can't run: toolchain and config trouble warns and skips, or fails the build in
-    /// strict mode; an unusable config file is always an error.
+    /// Xcode entry points. Toolchain and config trouble warns and skips lint, or fails
+    /// the build in strict mode; an unusable config file is always an error.
     func lintCommands(
         targetName: String,
         sourceFiles: [URL],
         projectRoot: URL,
         pluginWorkDirectory: URL
     ) throws -> [Command] {
+        // Native SwiftPM caches plugin planning against directory structure, excluding
+        // project-root config and tool changes. Leave a new entry after each plan so
+        // the next build re-plans; the tracked Swift output itself stays unchanged.
+        let planningDirectory = pluginWorkDirectory.appendingPathComponent("planning")
+        try FileManager.default.createDirectory(at: planningDirectory, withIntermediateDirectories: true)
+        for file in try FileManager.default.contentsOfDirectory(at: planningDirectory, includingPropertiesForKeys: nil)
+        {
+            try FileManager.default.removeItem(at: file)
+        }
+        let planningMarker = planningDirectory.appendingPathComponent(UUID().uuidString)
+        let planningStamp = pluginWorkDirectory.appendingPathComponent("lint-plan.swift")
+        let refreshCommand = Command.buildCommand(
+            displayName: "Track swift-format lint planning (\(targetName))",
+            executable: URL(fileURLWithPath: "/bin/sh"),
+            arguments: [
+                "-c",
+                "set -eu; touch \"$1\"; if [ ! -f \"$2\" ]; then printf '%s\\n' '// Persnoop planning stamp.' > \"$2\"; fi",
+                "persnoop-plan",
+                planningMarker.path,
+                planningStamp.path,
+            ],
+            outputFiles: [planningStamp]
+        )
+        let planningCommand = Command.prebuildCommand(
+            displayName: "Refresh swift-format lint plan (\(targetName))",
+            executable: URL(fileURLWithPath: "/usr/bin/true"),
+            arguments: [],
+            outputFilesDirectory: planningDirectory
+        )
+        let planningCommands = [planningCommand, refreshCommand]
+
+        // SwiftPM retains generated sources from the previous build graph. Keep the
+        // output set stable when chunks disappear, until the build directory is cleaned.
+        let laneCountFile = pluginWorkDirectory.appendingPathComponent("lint-lane-count")
+        let previousLaneCount =
+            (try? String(contentsOf: laneCountFile, encoding: .utf8))
+            .flatMap(Int.init) ?? 0
+        let inactiveCommands: [Command] = (0..<previousLaneCount).map { index in
+            let stamp = pluginWorkDirectory.appendingPathComponent("lint-stamp-\(index + 1).swift")
+            return .buildCommand(
+                displayName: "Preserve swift-format lint output (\(targetName), lane \(index + 1))",
+                executable: URL(fileURLWithPath: "/bin/sh"),
+                arguments: [
+                    "-c",
+                    "printf '%s\\n' '// Persnoop inactive lint stamp.' > \"$1\"",
+                    "persnoop-stamp",
+                    stamp.path,
+                ],
+                outputFiles: [stamp]
+            )
+        }
+
         let strict = strictModeEnabled(projectRoot: projectRoot)
 
         guard let launcher = swiftFormatLauncher() else {
@@ -54,7 +105,7 @@ struct Persnoop: BuildToolPlugin {
             } else {
                 Diagnostics.warning(message)
             }
-            return []
+            return planningCommands + inactiveCommands
         }
 
         guard
@@ -64,7 +115,7 @@ struct Persnoop: BuildToolPlugin {
                 pluginWorkDirectory: pluginWorkDirectory
             )
         else {
-            return []
+            return planningCommands + inactiveCommands
         }
 
         let probe = probeSwiftFormat(
@@ -75,7 +126,7 @@ struct Persnoop: BuildToolPlugin {
         )
         guard case .ok = probe else {
             emitProbeFailure(probe, launcher: launcher, configPath: configPath, strict: strict)
-            return []
+            return planningCommands + inactiveCommands
         }
 
         var fixedArguments =
@@ -90,53 +141,42 @@ struct Persnoop: BuildToolPlugin {
             fixedArguments: fixedArguments
         )
 
-        // SwiftPM retains generated sources from the previous build graph. Keep the
-        // output set stable when chunks disappear, until the build directory is cleaned.
-        let laneCountFile = pluginWorkDirectory.appendingPathComponent("lint-lane-count")
-        let previousLaneCount =
-            (try? String(contentsOf: laneCountFile, encoding: .utf8))
-            .flatMap(Int.init) ?? 0
         let laneCount = max(chunks.count, previousLaneCount)
         if laneCount != previousLaneCount {
             try String(laneCount).write(to: laneCountFile, atomically: true, encoding: .utf8)
         }
 
         let environment = toolchainSelectionEnvironment()
-        return (0..<laneCount).map { index in
-            let stamp = pluginWorkDirectory.appendingPathComponent("lint-stamp-\(index + 1).swift")
-            guard chunks.indices.contains(index) else {
+        // Reuse the probe identity so a formatter replaced at the same path reruns lint.
+        let fingerprint = preflightCacheKey(configPath: configPath, launcher: launcher) ?? UUID().uuidString
+        return planningCommands
+            + (0..<laneCount).map { index in
+                let stamp = pluginWorkDirectory.appendingPathComponent("lint-stamp-\(index + 1).swift")
+                guard chunks.indices.contains(index) else {
+                    return inactiveCommands[index]
+                }
+
+                let displayName =
+                    chunks.count == 1
+                    ? "swift-format lint (\(targetName))"
+                    : "swift-format lint (\(targetName), chunk \(index + 1) of \(chunks.count))"
                 return .buildCommand(
-                    displayName: "Preserve swift-format lint output (\(targetName), lane \(index + 1))",
+                    displayName: displayName,
                     executable: URL(fileURLWithPath: "/bin/sh"),
                     arguments: [
                         "-c",
-                        "printf '%s\\n' '// Persnoop inactive lint stamp.' > \"$1\"",
-                        "persnoop-stamp",
+                        "set -eu; stamp=$1; shift; rm -f \"$stamp\"; \"$@\"; printf '%s\\n' '// Persnoop lint stamp.' > \"$stamp\"",
+                        "persnoop-lint-\(fingerprint)",
                         stamp.path,
+                        launcher.executable.path,
+                    ] + fixedArguments + chunks[index],
+                    environment: environment,
+                    inputFiles: chunks[index].map { URL(fileURLWithPath: $0) } + [
+                        URL(fileURLWithPath: configPath), planningStamp,
                     ],
                     outputFiles: [stamp]
                 )
             }
-
-            let displayName =
-                chunks.count == 1
-                ? "swift-format lint (\(targetName))"
-                : "swift-format lint (\(targetName), chunk \(index + 1) of \(chunks.count))"
-            return .buildCommand(
-                displayName: displayName,
-                executable: URL(fileURLWithPath: "/bin/sh"),
-                arguments: [
-                    "-c",
-                    "set -eu; stamp=$1; shift; rm -f \"$stamp\"; \"$@\"; printf '%s\\n' '// Persnoop lint stamp.' > \"$stamp\"",
-                    "persnoop-lint",
-                    stamp.path,
-                    launcher.executable.path,
-                ] + fixedArguments + chunks[index],
-                environment: environment,
-                inputFiles: chunks[index].map { URL(fileURLWithPath: $0) } + [URL(fileURLWithPath: configPath)],
-                outputFiles: [stamp]
-            )
-        }
     }
 
     // MARK: - Shared Plugin Infrastructure (must be identical across all plugin targets)

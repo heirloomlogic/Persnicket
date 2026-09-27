@@ -57,7 +57,9 @@ Apply the plugin to any target you want linted when its Swift sources or project
 
 In Xcode and `swift build`, lint violations are reported as build warnings when lint runs, and they do not fail the build. Like incremental compiler warnings, they are not replayed on later no-op builds.
 
-Persnoop declares the source files and resolved configuration as command inputs. After each successful lint chunk, it writes a generated `.swift` file containing one comment; SwiftPM uses that stamp to skip unchanged lint work. These stamps add no declarations or executable code, but they are generated sources in the target's build graph. If the source set shrinks, unused stamps remain until the build directory is cleaned so SwiftPM can keep its generated-source list valid.
+Persnoop declares the source files and resolved configuration as command inputs and includes the preflight tool/config identity in each lint command. After each successful lint chunk, it writes a generated `.swift` file containing one comment; SwiftPM uses that stamp to skip unchanged lint work. These stamps add no declarations or executable code, but they are generated sources in the target's build graph. If the source set shrinks or lint is skipped after a failed probe, unused stamps remain until the build directory is cleaned so SwiftPM can keep its generated-source list valid.
+
+A small planning command refreshes a marker on each build so native SwiftPM re-evaluates configuration removal, configuration addition, and formatter replacement. Its separate comment-only Swift stamp is written once. This adds planning work to unchanged builds; the cached preflight probe and unchanged lint chunks still skip execution.
 
 If you want violations to *fail* a build, either run `swift-format lint --strict` directly in CI or opt into the plugin's strict mode:
 
