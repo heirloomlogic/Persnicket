@@ -67,34 +67,14 @@ jobs:
         run: xcrun swift-format lint --strict --parallel --recursive --configuration .swift-format Plugins/ Examples/ Package.swift
 
       - name: Compile-check plugins via consumer fixture
-        working-directory: Examples/CompileCheck
-        run: |
-          swift build
-          swift package plugin --allow-writing-to-package-directory format-source-code
+        run: ./bin/ci-verify-compile-check
 
       - name: Verify visible incremental lint and large source sets
         working-directory: Examples/CompileCheck
         run: ./verify-large-target.sh
 
       - name: Verify Persnipe reformats and --target scoping works
-        working-directory: Examples/CompileCheck
-        run: |
-          set -eu
-          printf 'print( "hello, world" )\n' > Sources/CompileCheck/main.swift
-          swift package plugin --allow-writing-to-package-directory format-source-code --target CompileCheck
-          if grep -q 'print( "hello, world" )' Sources/CompileCheck/main.swift; then
-            echo "::error::Persnipe did not reformat a deliberately misformatted file"
-            git checkout -- Sources/CompileCheck/main.swift
-            exit 1
-          fi
-          if ! grep -q 'print("hello, world")' Sources/CompileCheck/main.swift; then
-            cat Sources/CompileCheck/main.swift
-            echo "::error::Persnipe changed the file, but not to the expected formatting"
-            git checkout -- Sources/CompileCheck/main.swift
-            exit 1
-          fi
-          git checkout -- Sources/CompileCheck/main.swift
-          echo "ok: Persnipe reformatted the file via --target"
+        run: ./bin/ci-verify-persnipe
 
       # Without --follow-symlinks, swift-format skips a symlinked source file even when
       # it is named on the command line. swift-format 600 and 601 accept the flag but
@@ -138,26 +118,7 @@ jobs:
           echo "ok: Persnipe failed on the rejected configuration"
 
       - name: Verify Persnoop strict mode fails on violations
-        working-directory: Examples/CompileCheck
-        run: |
-          set -eu
-          printf 'print("hello, world")\nlet value = Int("1")!\nprint(value)\n' > Sources/CompileCheck/main.swift
-          rm -rf .build
-          if PERSNICKET_STRICT=1 swift build > build.log 2>&1; then
-            cat build.log
-            echo "::error::strict mode did not fail the build on a lint violation"
-            git checkout -- Sources/CompileCheck/main.swift
-            exit 1
-          fi
-          cat build.log
-          if ! grep -q 'NeverForceUnwrap' build.log; then
-            echo "::error::build failed for a reason other than the expected NeverForceUnwrap violation"
-            git checkout -- Sources/CompileCheck/main.swift
-            exit 1
-          fi
-          rm -f build.log
-          git checkout -- Sources/CompileCheck/main.swift
-          echo "ok: strict mode failed the build as expected"
+        run: ./bin/ci-verify-persnoop
 
       # A .swift-format that isn't a JSON object configures nothing; the build must
       # fail naming the file rather than lint under some other configuration.
@@ -203,9 +164,9 @@ jobs:
     # that action's latest stable (v2.4.0) still declares `using: node20`, which
     # reached end of life on 2026-04-30, and its only newer tag (v3.0.0-beta.1) is
     # a prerelease on the same runtime. It also removes this repo's last
-    # third-party action and pins the compiler's major.minor: `swift:6.2` follows
-    # 6.2 patch releases and image rebuilds. Dependabot can't bump `container:`
-    # images (dependabot-core#5819), so these tags are maintained by hand.
+    # third-party action. The compiler's patch release and registry manifest are
+    # pinned because Dependabot can't bump `container:` images
+    # (dependabot-core#5819); this reference is maintained by hand.
     #
     # This is NOT a speed change: measured on run 32320949022, `Initialize
     # containers` costs 39s against the 37s the setup-swift step used to cost,
@@ -214,7 +175,7 @@ jobs:
     # swift-format ships in the Swift Linux toolchain from 6.0 onward, so the
     # image needs no separate install. Use the full image, not -slim: the slim
     # variants omit the compiler.
-    container: swift:6.2
+    container: swift:6.2.4@sha256:9bea530093ffff8cf6c259991715ee843fe4d0f932e612f7f4b79cca6e00db87
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -236,34 +197,14 @@ jobs:
         run: swift-format lint --strict --parallel --recursive --configuration .swift-format Plugins/ Examples/ Package.swift
 
       - name: Compile-check plugins via consumer fixture
-        working-directory: Examples/CompileCheck
-        run: |
-          swift build
-          swift package plugin --allow-writing-to-package-directory format-source-code
+        run: ./bin/ci-verify-compile-check
 
       - name: Verify visible incremental lint and large source sets
         working-directory: Examples/CompileCheck
         run: ./verify-large-target.sh
 
       - name: Verify Persnipe reformats and --target scoping works
-        working-directory: Examples/CompileCheck
-        run: |
-          set -eu
-          printf 'print( "hello, world" )\n' > Sources/CompileCheck/main.swift
-          swift package plugin --allow-writing-to-package-directory format-source-code --target CompileCheck
-          if grep -q 'print( "hello, world" )' Sources/CompileCheck/main.swift; then
-            echo "::error::Persnipe did not reformat a deliberately misformatted file"
-            git checkout -- Sources/CompileCheck/main.swift
-            exit 1
-          fi
-          if ! grep -q 'print("hello, world")' Sources/CompileCheck/main.swift; then
-            cat Sources/CompileCheck/main.swift
-            echo "::error::Persnipe changed the file, but not to the expected formatting"
-            git checkout -- Sources/CompileCheck/main.swift
-            exit 1
-          fi
-          git checkout -- Sources/CompileCheck/main.swift
-          echo "ok: Persnipe reformatted the file via --target"
+        run: ./bin/ci-verify-persnipe
 
       # See the matching step in the macOS job.
       - name: Verify Persnipe formats a symlinked source file
@@ -315,26 +256,7 @@ jobs:
           echo "ok: misconfigured overrides warned and discovery fell back"
 
       - name: Verify Persnoop strict mode fails on violations
-        working-directory: Examples/CompileCheck
-        run: |
-          set -eu
-          printf 'print("hello, world")\nlet value = Int("1")!\nprint(value)\n' > Sources/CompileCheck/main.swift
-          rm -rf .build
-          if PERSNICKET_STRICT=1 swift build > build.log 2>&1; then
-            cat build.log
-            echo "::error::strict mode did not fail the build on a lint violation"
-            git checkout -- Sources/CompileCheck/main.swift
-            exit 1
-          fi
-          cat build.log
-          if ! grep -q 'NeverForceUnwrap' build.log; then
-            echo "::error::build failed for a reason other than the expected NeverForceUnwrap violation"
-            git checkout -- Sources/CompileCheck/main.swift
-            exit 1
-          fi
-          rm -f build.log
-          git checkout -- Sources/CompileCheck/main.swift
-          echo "ok: strict mode failed the build as expected"
+        run: ./bin/ci-verify-persnoop
 
       # See the matching step in the macOS job.
       - name: Verify an unusable .swift-format fails the build
@@ -374,9 +296,9 @@ jobs:
   swift-6-0-floor:
     name: Swift 6.0 floor (Linux container)
     runs-on: ubuntu-latest
-    # The exact release, not `swift:6.0`, which floats to the latest 6.0.x patch and
-    # would test that instead of the floor.
-    container: swift:6.0.0
+    # The exact release and registry manifest, not `swift:6.0`, which floats to the
+    # latest 6.0.x patch and would test that instead of the floor.
+    container: swift:6.0.0@sha256:c0d756c88bc51f8caa1c122f96d9aebe9c48d20dd8196b5cbd5a673df5f03d35
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -389,10 +311,7 @@ jobs:
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Compile-check plugins via consumer fixture
-        working-directory: Examples/CompileCheck
-        run: |
-          swift build
-          swift package plugin --allow-writing-to-package-directory format-source-code
+        run: ./bin/ci-verify-compile-check
 
       - name: Verify visible incremental lint and large source sets
         working-directory: Examples/CompileCheck
@@ -446,24 +365,9 @@ jobs:
       # mode would fail the build on that instead, with no NeverForceUnwrap finding in
       # the log, so the second check tells them apart.
       - name: Verify Persnoop strict mode fails on violations
-        working-directory: Examples/CompileCheck
-        run: |
-          set -eu
-          trap 'rm -f .swift-format build.log; git checkout -- Sources/CompileCheck/main.swift' EXIT
-          printf '{"version": 1, "rules": {"NeverForceUnwrap": true}}\n' > .swift-format
-          printf 'print("hello, world")\nlet value = Int("1")!\nprint(value)\n' > Sources/CompileCheck/main.swift
-          rm -rf .build
-          if PERSNICKET_STRICT=1 swift build > build.log 2>&1; then
-            cat build.log
-            echo "::error::strict mode did not fail the build on a lint violation"
-            exit 1
-          fi
-          cat build.log
-          if ! grep -q 'NeverForceUnwrap' build.log; then
-            echo "::error::build failed for a reason other than the expected NeverForceUnwrap violation"
-            exit 1
-          fi
-          echo "ok: strict mode failed the build as expected"
+        env:
+          PERSNICKET_CI_SWIFT_6_0_FLOOR: "1"
+        run: ./bin/ci-verify-persnoop
 
       # See the matching step in the macOS job. The plugin parses the config with the
       # toolchain's Foundation, which is the floor's here.

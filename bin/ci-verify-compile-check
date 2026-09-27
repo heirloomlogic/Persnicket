@@ -1,0 +1,7 @@
+#!/usr/bin/env sh
+# Builds the consumer fixture and runs the command plugin against its source.
+set -eu
+cd "$(dirname "$0")/../Examples/CompileCheck"
+
+swift build
+swift package plugin --allow-writing-to-package-directory format-source-code
