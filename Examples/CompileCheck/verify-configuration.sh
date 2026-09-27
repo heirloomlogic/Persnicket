@@ -5,13 +5,19 @@ unset CDPATH
 fixture_dir=$(cd -- "$(dirname "$0")" && pwd)
 repo_dir=$(cd -- "$fixture_dir/../.." && pwd)
 scratch_dir=$(mktemp -d "${TMPDIR:-/tmp}/persnicket-config.XXXXXX")
+stage=setup
 cleanup() {
     result=$?
     if [ "$result" -eq 0 ]; then
         rm -rf "$scratch_dir"
     else
-        echo "error: configuration fixture failed; evidence at $scratch_dir" >&2
-        tail -40 "$scratch_dir"/*.log >&2 || true
+        echo "error: configuration fixture failed at $stage; evidence at $scratch_dir" >&2
+        tail -n 40 "$scratch_dir"/*.log >&2 || true
+        for evidence in "$scratch_dir/calls.txt" "$scratch_dir"/Sources/Check/*.swift "$scratch_dir"/Sources/Check/Nested/*.swift; do
+            [ -f "$evidence" ] || continue
+            echo "==> $evidence <==" >&2
+            cat "$evidence" >&2
+        done
     fi
 }
 trap cleanup EXIT
@@ -54,6 +60,8 @@ nested_config() {
     printf '{"version":1,"indentation":{"spaces":4},"rules":{"NeverForceUnwrap":%s}}\n' "$1" > Sources/Check/Nested/.swift-format
 }
 build() {
+    stage=$1
+    echo "checking build: $stage"
     : > calls.txt
     if [ -n "${PERSNICKET_TEST_BUILD_SYSTEM:-}" ]; then
         swift build --build-system "$PERSNICKET_TEST_BUILD_SYSTEM" > "$1.log" 2>&1
@@ -122,11 +130,13 @@ nested_config true
 printf 'func root()->Int{\nreturn 1\n}\n' > Sources/Check/Root.swift
 printf 'func nested()->Int{\nreturn Int("1")!\n}\n' > Sources/Check/Nested/Check.swift
 : > calls.txt
+stage=format
 swift package plugin --allow-writing-to-package-directory format-source-code > format.log 2>&1
 grep -q '^  return 1$' Sources/Check/Root.swift
 grep -q '^    return Int("1")!$' Sources/Check/Nested/Check.swift
 assert_absent '^--configuration$' calls.txt
 printf '{"version":99}\n' > Sources/Check/Nested/.swift-format
+stage=rejected
 if swift package plugin --allow-writing-to-package-directory format-source-code > rejected.log 2>&1; then
     echo "error: Persnipe accepted a rejected nested config" >&2
     exit 1
@@ -139,6 +149,7 @@ build fallback
 assert_linted
 grep -q '^--configuration$' calls.txt
 grep -q 'swift-format-fallback.json' calls.txt
+stage=fallback-format
 swift package plugin --allow-writing-to-package-directory format-source-code > fallback-format.log 2>&1
 grep -Eq '^    (return )?1$' Sources/Check/Root.swift
 root_config
@@ -160,6 +171,7 @@ case "$("$real_formatter" --version)" in
         build linked-edited
         assert_linted
         assert_absent 'NeverForceUnwrap' linked-edited.log
+        stage=linked-format
         swift package plugin --allow-writing-to-package-directory format-source-code > linked-format.log 2>&1
         grep -q '^      return Int("1")!$' Shared/Linked.swift
         ;;
