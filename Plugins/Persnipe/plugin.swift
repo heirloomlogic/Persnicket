@@ -19,9 +19,9 @@ struct Persnipe: CommandPlugin {
             pluginWorkDirectory: context.pluginWorkDirectoryURL
         )
 
-        var formattedTargets = 0
-        var failedTargets: [String] = []
-        var reportedLines = Set<String>()
+        var sourceTargetNames: [String] = []
+        var seenPaths = Set<String>()
+        var swiftFilePaths: [String] = []
         for target in requestedTargets {
             guard let sourceModule = target as? SourceModuleTarget else {
                 Diagnostics.remark(
@@ -40,33 +40,33 @@ struct Persnipe: CommandPlugin {
                 continue
             }
 
-            // A failure confined to this target (say, a syntax error) must not leave
-            // the targets after it unformatted, so record it and carry on.
-            switch format(
-                filePaths: swiftFiles.map { $0.url.path(percentEncoded: false) },
-                scope: "target \"\(target.name)\"",
-                launcher: launcher,
-                configPath: configPath,
-                reportedLines: &reportedLines
-            ) {
-            case .formatted:
-                formattedTargets += 1
-            case .failed:
-                failedTargets.append(target.name)
-            case .unusable:
-                throw PluginError(message: "Persnipe stopped; see the error above.")
+            sourceTargetNames.append(target.name)
+            for swiftFile in swiftFiles {
+                let path = swiftFile.url.path(percentEncoded: false)
+                if seenPaths.insert(path).inserted {
+                    swiftFilePaths.append(path)
+                }
             }
         }
 
-        if !failedTargets.isEmpty {
-            let names = failedTargets.map { "\"\($0)\"" }.joined(separator: ", ")
-            let others = formattedTargets == 0 ? "" : " The other targets were formatted."
-            throw PluginError(
-                message: """
-                    swift-format failed for \(failedTargets.count == 1 ? "target" : "targets") \(names); \
-                    see the errors above.\(others)
-                    """
-            )
+        guard !swiftFilePaths.isEmpty else { return }
+
+        let names = sourceTargetNames.map { "\"\($0)\"" }.joined(separator: ", ")
+        let scope = "\(sourceTargetNames.count == 1 ? "target" : "targets") \(names)"
+        var reportedLines = Set<String>()
+        switch format(
+            filePaths: swiftFilePaths,
+            scope: scope,
+            launcher: launcher,
+            configPath: configPath,
+            reportedLines: &reportedLines
+        ) {
+        case .formatted:
+            return
+        case .failed:
+            throw PluginError(message: "swift-format failed for \(scope); see the errors above.")
+        case .unusable:
+            throw PluginError(message: "Persnipe stopped; see the error above.")
         }
     }
 
@@ -148,10 +148,14 @@ struct Persnipe: CommandPlugin {
             ]
         let chunks = chunkedSourceFilePaths(filePaths, fixedArguments: fixedArguments)
         var failed = false
-        for chunk in chunks {
+        for (index, chunk) in chunks.enumerated() {
+            let chunkScope =
+                chunks.count == 1
+                ? scope
+                : "\(scope), batch \(index + 1) of \(chunks.count)"
             switch formatChunk(
                 arguments: fixedArguments + chunk,
-                scope: scope,
+                scope: chunkScope,
                 launcher: launcher,
                 configPath: configPath,
                 reportedLines: &reportedLines

@@ -1,23 +1,132 @@
 #!/usr/bin/env sh
-# Verifies that Persnipe formats only the requested target.
+# Verifies Persnipe's cross-target batching and --target isolation.
 set -eu
-cd "$(dirname "$0")/../Examples/CompileCheck"
+unset CDPATH
 
-SOURCE="Sources/CompileCheck/main.swift"
-trap 'git checkout -- "$SOURCE"' EXIT
+fixture_dir=$(cd -- "$(dirname "$0")/../Examples/CompileCheck" && pwd)
+compile_source="$fixture_dir/Sources/CompileCheck/main.swift"
+argument_source="$fixture_dir/Sources/ArgumentLimitCheck/ArgumentLimitCheck.swift"
+scratch_dir=$(mktemp -d "${TMPDIR:-/tmp}/persnicket-persnipe.XXXXXX")
+log_dir="$scratch_dir/logs"
+formatter_wrapper="$scratch_dir/swift-format"
 
-printf 'print( "hello, world" )\n' > "$SOURCE"
-swift package plugin --allow-writing-to-package-directory format-source-code --target CompileCheck
+cleanup() {
+    cp "$scratch_dir/main.swift" "$compile_source"
+    cp "$scratch_dir/ArgumentLimitCheck.swift" "$argument_source"
+    rm -rf "$scratch_dir"
+}
+trap cleanup EXIT HUP INT TERM
 
-if grep -q 'print( "hello, world" )' "$SOURCE"; then
-    echo "::error::Persnipe did not reformat a deliberately misformatted file"
+cp "$compile_source" "$scratch_dir/main.swift"
+cp "$argument_source" "$scratch_dir/ArgumentLimitCheck.swift"
+mkdir -p "$log_dir"
+
+if command -v swift-format >/dev/null 2>&1; then
+    real_swift_format=$(command -v swift-format)
+elif command -v xcrun >/dev/null 2>&1 && xcrun --find swift-format >/dev/null 2>&1; then
+    real_swift_format=$(xcrun --find swift-format)
+else
+    echo "::error::swift-format is unavailable"
     exit 1
 fi
 
-if ! grep -q 'print("hello, world")' "$SOURCE"; then
-    cat "$SOURCE"
-    echo "::error::Persnipe changed the file, but not to the expected formatting"
+cat > "$formatter_wrapper" <<'SCRIPT'
+#!/usr/bin/env sh
+set -eu
+
+format_mode=0
+for argument in "$@"; do
+    if [ "$argument" = format ]; then
+        format_mode=1
+        break
+    fi
+done
+
+if [ "$format_mode" -eq 1 ]; then
+    log_file="$PERSNICKET_TEST_LOG_DIR/format-$$.log"
+    : > "$log_file"
+    for argument in "$@"; do
+        case "$argument" in
+            *.swift) printf '%s\n' "$argument" >> "$log_file" ;;
+        esac
+    done
+    if [ "${PERSNICKET_TEST_FAIL_FORMAT:-0}" -eq 1 ]; then
+        echo "intentional Persnipe batch failure" >&2
+        exit 1
+    fi
+fi
+
+exec "$PERSNICKET_TEST_REAL_SWIFT_FORMAT" "$@"
+SCRIPT
+chmod +x "$formatter_wrapper"
+
+clear_logs() {
+    rm -rf "$log_dir"
+    mkdir -p "$log_dir"
+}
+
+format_invocation_count() {
+    find "$log_dir" -type f -name 'format-*.log' | wc -l | tr -d ' '
+}
+
+cd "$fixture_dir"
+
+printf 'print( "hello, world" )\n' > "$compile_source"
+printf 'struct  ArgumentLimitCheck{ }\n' > "$argument_source"
+PERSNICKET_TEST_REAL_SWIFT_FORMAT="$real_swift_format" PERSNICKET_TEST_LOG_DIR="$log_dir" SWIFT_FORMAT="$formatter_wrapper" swift package plugin --allow-writing-to-package-directory format-source-code
+
+if ! grep -q '^print("hello, world")$' "$compile_source" || ! grep -q '^struct ArgumentLimitCheck {}$' "$argument_source"; then
+    cat "$compile_source" "$argument_source"
+    echo "::error::Persnipe did not reformat both requested source targets"
     exit 1
 fi
 
-echo "ok: Persnipe reformatted the file via --target"
+invocation_count=$(format_invocation_count)
+if [ "$invocation_count" -ne 1 ]; then
+    echo "::error::Persnipe used $invocation_count swift-format invocations for two small source targets; expected one"
+    exit 1
+fi
+
+printf '%s\n' "$compile_source" "$argument_source" | sort > "$scratch_dir/expected-paths.txt"
+find "$log_dir" -type f -name 'format-*.log' -exec cat {} + | sort > "$scratch_dir/captured-paths.txt"
+if ! diff -u "$scratch_dir/expected-paths.txt" "$scratch_dir/captured-paths.txt"; then
+    echo "::error::Persnipe did not send each requested source path exactly once"
+    exit 1
+fi
+echo "ok: Persnipe batched both source targets into one swift-format invocation"
+
+clear_logs
+printf 'print( "hello, world" )\n' > "$compile_source"
+printf 'struct  ArgumentLimitCheck{let  value:Int=1}\n' > "$argument_source"
+cp "$argument_source" "$scratch_dir/unrequested-before.swift"
+PERSNICKET_TEST_REAL_SWIFT_FORMAT="$real_swift_format" PERSNICKET_TEST_LOG_DIR="$log_dir" SWIFT_FORMAT="$formatter_wrapper" swift package plugin --allow-writing-to-package-directory format-source-code --target CompileCheck
+
+if ! grep -q '^print("hello, world")$' "$compile_source"; then
+    cat "$compile_source"
+    echo "::error::Persnipe did not reformat the requested target"
+    exit 1
+fi
+if ! cmp -s "$scratch_dir/unrequested-before.swift" "$argument_source"; then
+    diff -u "$scratch_dir/unrequested-before.swift" "$argument_source" || true
+    echo "::error::Persnipe changed the unrequested target"
+    exit 1
+fi
+echo "ok: Persnipe reformatted the requested target and left the other target byte-identical"
+
+clear_logs
+if PERSNICKET_TEST_REAL_SWIFT_FORMAT="$real_swift_format" PERSNICKET_TEST_LOG_DIR="$log_dir" PERSNICKET_TEST_FAIL_FORMAT=1 SWIFT_FORMAT="$formatter_wrapper" swift package plugin --allow-writing-to-package-directory format-source-code > "$scratch_dir/failure.log" 2>&1; then
+    cat "$scratch_dir/failure.log"
+    echo "::error::Persnipe exited successfully after a batched swift-format failure"
+    exit 1
+fi
+if ! grep -q 'intentional Persnipe batch failure' "$scratch_dir/failure.log" || ! grep -q 'swift-format format failed for targets "CompileCheck", "ArgumentLimitCheck"' "$scratch_dir/failure.log"; then
+    cat "$scratch_dir/failure.log"
+    echo "::error::Persnipe did not identify the failed multi-target batch"
+    exit 1
+fi
+if [ "$(format_invocation_count)" -ne 1 ]; then
+    cat "$scratch_dir/failure.log"
+    echo "::error::Persnipe split a failed two-target batch into multiple invocations"
+    exit 1
+fi
+echo "ok: Persnipe returned failure with diagnostics for the failed multi-target batch"
