@@ -35,7 +35,10 @@ cleanup() {
         rm -rf "$scratch_dir"
     fi
 }
-trap cleanup EXIT HUP INT TERM
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 cp "$source_file" "$scratch_dir/ArgumentLimitCheck.swift"
 if [ -f "$config_file" ]; then
