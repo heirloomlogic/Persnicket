@@ -3,16 +3,21 @@
 #   1. Copies a default .swift-format into the project root if one is missing.
 #   2. Installs the swift-format problem matcher at .github/swift-format-matcher.json.
 #   3. Emits the GitHub Actions ::add-matcher:: workflow command so violations
-#      appear as inline PR annotations.
+#      appear as inline PR annotations (and configuration diagnostics, which
+#      name no file, as run-level ones).
 #
 # Idempotent and safe to re-run. A project's own .swift-format is never
 # overwritten; the matcher is always refreshed from this package's copy.
 #
-# Run from the workspace root: the runner resolves the ::add-matcher:: path
-# relative to GITHUB_WORKSPACE, not this script's working directory. The
-# matcher stays registered for the rest of the job (its pattern also matches
-# swiftc diagnostics from later build steps); emit
-# `::remove-matcher owner=swift-format::` after the lint step to unregister it.
+# Run from the project root: .swift-format and .github/ land in the current
+# directory. The ::add-matcher:: path is emitted absolute because the runner
+# resolves a relative one against GITHUB_WORKSPACE, not the step's working
+# directory, so a subdirectory run would otherwise register nothing, silently.
+# The matchers stay registered for the rest of the job (the file-and-line
+# pattern also matches swiftc diagnostics from later build steps); emit
+# `::remove-matcher owner=swift-format::` and
+# `::remove-matcher owner=swift-format-config::` after the lint step to
+# unregister them.
 set -eu
 
 PKG_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -22,6 +27,11 @@ SRC_MATCHER="$PKG_ROOT/.github/swift-format-matcher.json"
 for f in "$SRC_CONFIG" "$SRC_MATCHER"; do
     [ -f "$f" ] || { echo "error: $f not found in package checkout" >&2; exit 1; }
 done
+
+if [ -e .github ] && [ ! -d .github ]; then
+    echo "error: .github exists but is not a directory; the problem matcher is installed inside it" >&2
+    exit 1
+fi
 
 if [ -f .swift-format ]; then
     echo "ci-lint-setup: .swift-format already present, leaving project copy untouched" >&2
@@ -39,4 +49,4 @@ else
     echo "ci-lint-setup: installed problem matcher at .github/swift-format-matcher.json" >&2
 fi
 
-echo "::add-matcher::.github/swift-format-matcher.json"
+echo "::add-matcher::$DEST_MATCHER"

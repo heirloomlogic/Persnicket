@@ -13,6 +13,17 @@
           "message": 5
         }
       ]
+    },
+    {
+      "owner": "swift-format-config",
+      "severity": "warning",
+      "pattern": [
+        {
+          "regexp": "^<unknown>: (warning|error): (.+)$",
+          "severity": 1,
+          "message": 2
+        }
+      ]
     }
   ]
 }

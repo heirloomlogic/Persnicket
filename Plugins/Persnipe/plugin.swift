@@ -7,37 +7,21 @@ struct Persnipe: CommandPlugin {
         context: PluginContext,
         arguments: [String]
     ) throws {
-        var argumentExtractor = ArgumentExtractor(arguments)
-        let targetNames = argumentExtractor.extractOption(named: "target")
-        let unrecognized = argumentExtractor.remainingArguments
-        guard unrecognized.isEmpty else {
-            let message =
-                """
-                Unrecognized arguments: \(unrecognized.joined(separator: " ")). \
-                Persnipe accepts --target <name> (repeatable, space-separated — \
-                --target=<name> is not supported) to limit formatting to specific targets.
-                """
-            Diagnostics.error(message)
-            throw PluginError(message: message)
-        }
+        let targetNames = try requestedTargetNames(from: arguments)
+        let requestedTargets =
+            targetNames.isEmpty
+            ? context.package.targets
+            : try context.package.targets(named: targetNames)
 
-        let requestedTargets: [Target]
-        if targetNames.isEmpty {
-            requestedTargets = context.package.targets
-        } else {
-            requestedTargets = try context.package.targets(named: targetNames)
-        }
-
-        let launcher = swiftFormatLauncher()
-
-        let configPath = try resolveConfiguration(
-            launcher: launcher,
+        pinDeveloperDirectory(toXcodeOf: try? context.tool(named: "swift-format").url)
+        let (launcher, configPath) = try prepareSwiftFormat(
             projectRoot: context.package.directoryURL,
             pluginWorkDirectory: context.pluginWorkDirectoryURL
         )
 
-        logSwiftFormatVersion(launcher: launcher)
-
+        var formattedTargets = 0
+        var failedTargets: [String] = []
+        var reportedLines = Set<String>()
         for target in requestedTargets {
             guard let sourceModule = target as? SourceModuleTarget else {
                 Diagnostics.remark(
@@ -56,94 +40,199 @@ struct Persnipe: CommandPlugin {
                 continue
             }
 
-            try format(
+            // A failure confined to this target (say, a syntax error) must not leave
+            // the targets after it unformatted, so record it and carry on.
+            switch format(
+                filePaths: swiftFiles.map { $0.url.path(percentEncoded: false) },
+                scope: "target \"\(target.name)\"",
                 launcher: launcher,
-                swiftFiles: swiftFiles,
-                targetName: target.name,
-                configPath: configPath
+                configPath: configPath,
+                reportedLines: &reportedLines
+            ) {
+            case .formatted:
+                formattedTargets += 1
+            case .failed:
+                failedTargets.append(target.name)
+            case .unusable:
+                throw PluginError(message: "Persnipe stopped; see the error above.")
+            }
+        }
+
+        if !failedTargets.isEmpty {
+            let names = failedTargets.map { "\"\($0)\"" }.joined(separator: ", ")
+            let others = formattedTargets == 0 ? "" : " The other targets were formatted."
+            throw PluginError(
+                message: """
+                    swift-format failed for \(failedTargets.count == 1 ? "target" : "targets") \(names); \
+                    see the errors above.\(others)
+                    """
             )
         }
     }
 
-    func format(
-        launcher: SwiftFormatLauncher,
-        swiftFiles: [File],
-        targetName: String,
-        configPath: String
-    ) throws {
-        var arguments =
-            launcher.leadingArguments + [
-                "format",
-                "--in-place",
-                "--parallel",
-                "--configuration", configPath,
-            ]
-        arguments += swiftFiles.map { $0.url.path(percentEncoded: false) }
+    // MARK: Shared by the SwiftPM and Xcode Entry Points
 
+    /// Parses Persnipe's arguments: zero or more `--target <name>` (or
+    /// `--target=<name>`). Returns the requested names, de-duplicated in order.
+    func requestedTargetNames(from arguments: [String]) throws -> [String] {
+        let usage = "Persnipe accepts only --target <name>, repeatable, to limit formatting to specific targets."
+        // ArgumentExtractor silently drops a `--target` that has no value — trailing,
+        // or before a `--` — which would widen `--target "$UNSET"` from one target to
+        // all of them.
+        for (index, argument) in arguments.enumerated() where argument == "--target" {
+            let value = arguments.indices.contains(index + 1) ? arguments[index + 1] : ""
+            if value.isEmpty || value.hasPrefix("-") {
+                throw failure("--target requires a target name. \(usage)")
+            }
+        }
+        var argumentExtractor = ArgumentExtractor(arguments)
+        let targetNames = argumentExtractor.extractOption(named: "target")
+        if targetNames.contains(where: \.isEmpty) {
+            throw failure("--target requires a target name. \(usage)")
+        }
+        let unrecognized = argumentExtractor.remainingArguments
+        guard unrecognized.isEmpty else {
+            throw failure("Unrecognized arguments: \(unrecognized.joined(separator: " ")). \(usage)")
+        }
+        var seen = Set<String>()
+        return targetNames.filter { seen.insert($0).inserted }
+    }
+
+    /// Resolves the launcher and configuration, or throws — after an error
+    /// diagnostic — when either is unusable, since nothing could be formatted.
+    func prepareSwiftFormat(
+        projectRoot: URL,
+        pluginWorkDirectory: URL
+    ) throws -> (launcher: SwiftFormatLauncher, configPath: String) {
+        guard let launcher = swiftFormatLauncher() else {
+            throw failure(swiftFormatNotFoundMessage(outcome: "nothing was formatted"))
+        }
+        guard
+            let configPath = try resolveConfiguration(
+                launcher: launcher,
+                projectRoot: projectRoot,
+                pluginWorkDirectory: pluginWorkDirectory
+            )
+        else {
+            throw PluginError(message: "Persnipe formatted nothing; see the error above.")
+        }
+        logSwiftFormatVersion(launcher: launcher)
+        return (launcher, configPath)
+    }
+
+    enum FormatOutcome {
+        case formatted
+        /// swift-format failed on these files, for example on a syntax error.
+        case failed
+        /// swift-format itself can't work — it rejects the configuration or the
+        /// options — so every other invocation would fail the same way.
+        case unusable
+    }
+
+    /// Runs `swift-format format --in-place` over `filePaths`, emitting a diagnostic
+    /// for any failure. `scope` names the files in messages, such as `target "App"`.
+    /// Warnings swift-format prints on success are surfaced, skipping any line
+    /// already in `reportedLines`, so a config warning is reported once, not once
+    /// per file and target.
+    func format(
+        filePaths: [String],
+        scope: String,
+        launcher: SwiftFormatLauncher,
+        configPath: String,
+        reportedLines: inout Set<String>
+    ) -> FormatOutcome {
         let process = Process()
         process.executableURL = launcher.executable
-        process.arguments = arguments
+        process.arguments =
+            launcher.leadingArguments + ["format", "--in-place"] + commonSwiftFormatOptions + [
+                "--configuration", configPath,
+            ] + filePaths
 
         let stderrPipe = Pipe()
         process.standardError = stderrPipe
 
-        try process.run()
+        do {
+            try process.run()
+        } catch {
+            // The launcher was verified to exist, so this is specific to the
+            // invocation — too many arguments, say — and other scopes may succeed.
+            Diagnostics.error(
+                """
+                swift-format could not be launched for \(scope) \
+                (\(launcher.displayCommand)): \(error.localizedDescription)
+                """
+            )
+            return .failed
+        }
         let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
+        let stderr = (String(data: stderrData, encoding: .utf8) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard process.terminationReason == .exit, process.terminationStatus == EXIT_SUCCESS else {
-            let stderr = String(data: stderrData, encoding: .utf8) ?? ""
-            let lower = stderr.lowercased()
-            let isConfigError =
-                lower.contains("unable to read configuration")
-                || lower.contains("invalid configuration")
-                || lower.contains("unknown argument")
-
-            if isConfigError {
-                var version: Int?
-                if case .ok(let v) = validateConfig(at: configPath) { version = v }
-                let versionString = version.map(String.init) ?? "unknown"
-                Diagnostics.warning(
+            let kind = classifySwiftFormatFailure(stderr: stderr)
+            switch kind {
+            case .missingExecutable:
+                Diagnostics.error(
+                    missingExecutableMessage(launcher: launcher, stderr: stderr, outcome: "nothing was formatted")
+                )
+                return .unusable
+            case .configuration:
+                Diagnostics.error(
+                    configFailureMessage(
+                        launcher: launcher,
+                        configPath: configPath,
+                        stderr: stderr,
+                        outcome: "nothing was formatted"
+                    )
+                )
+                return .unusable
+            case .unsupportedOption, .other:
+                // Under `--parallel`, swift-format repeats a file-independent message
+                // once per file; keep the first of each.
+                var seenLines = Set<String>()
+                let uniqueStderr = stderr.split(separator: "\n", omittingEmptySubsequences: false)
+                    .filter { $0.isEmpty || seenLines.insert(String($0)).inserted }
+                    .joined(separator: "\n")
+                let hint =
+                    kind == .unsupportedOption
+                    ? "\nThis swift-format predates an option Persnipe passes; it needs swift-format 600 (Swift 6.0) or newer."
+                    : ""
+                Diagnostics.error(
                     """
-                    swift-format cannot parse the configuration — formatting skipped for \
-                    target "\(targetName)".
-
-                    The active toolchain's swift-format is incompatible with the config schema. \
-                    This is a CI/toolchain setup issue, not a source code problem.
-
+                    swift-format format failed for \(scope) (\(describeTermination(of: process))).\(hint)
                     --- swift-format stderr ---
-                    \(stderr.trimmingCharacters(in: .whitespacesAndNewlines))
+                    \(uniqueStderr.isEmpty ? "(empty)" : uniqueStderr)
                     ---------------------------
-
-                    • config: \(configPath)  (version: \(versionString))
-                    • executable: \(launcher.displayCommand)
-                    • Fix: upgrade the toolchain to match the config schema, or pin \
-                    the config to an older schema compatible with the active toolchain.
                     """
                 )
-                return
+                return kind == .unsupportedOption ? .unusable : .failed
             }
-
-            let message =
-                """
-                swift-format format failed for target "\(targetName)" \
-                (status \(process.terminationStatus)).
-                --- swift-format stderr ---
-                \(stderr.isEmpty ? "(empty)" : stderr.trimmingCharacters(in: .whitespacesAndNewlines))
-                ---------------------------
-                """
-            Diagnostics.error(message)
-            throw PluginError(message: message)
         }
 
-        Diagnostics.remark("Formatted Swift source files in target \"\(targetName)\".")
+        // swift-format exits 0 despite warnings such as a misspelled rule name in the
+        // configuration; surface them rather than drop them.
+        let newLines = stderr.split(separator: "\n")
+            .map(String.init)
+            .filter { reportedLines.insert($0).inserted }
+        if !newLines.isEmpty {
+            Diagnostics.warning("swift-format reported while formatting \(scope):\n\(newLines.joined(separator: "\n"))")
+        }
+        Diagnostics.remark("Formatted Swift source files in \(scope).")
+        return .formatted
+    }
+
+    /// Emits `message` as an error and returns the error to throw after it.
+    func failure(_ message: String) -> PluginError {
+        Diagnostics.error(message)
+        return PluginError(message: "Persnipe formatted nothing; see the error above.")
     }
 
     // MARK: - Shared Plugin Infrastructure (must be identical across all plugin targets)
     //
     // Some members are used by only one plugin (`logSwiftFormatVersion` only by
-    // Persnipe; `strictModeEnabled`, the probe, and the probe-failure emitters only
-    // by Persnoop) but live here so the section stays byte-identical across both
+    // Persnipe; `strictModeEnabled`, the probe, and `toolchainSelectionEnvironment`
+    // only by Persnoop) but live here so the section stays byte-identical across both
     // targets — the accepted cost of SwiftPM's no-shared-plugin-source rule.
 
     /// Resolves how to invoke `swift-format` on the current platform.
@@ -158,12 +247,10 @@ struct Persnipe: CommandPlugin {
     /// consumers don't have to symlink it into `/usr/local/bin` from CI. See
     /// `resolveLinuxSwiftFormatPath` for the search order.
     ///
-    /// If Linux discovery fails, emits a `Diagnostics.error` listing the searched paths
-    /// and returns a `/usr/bin/env swift-format` placeholder launcher. In a build-tool
-    /// plugin the error diagnostic alone fails the build during planning; in a command
-    /// plugin the placeholder is what ultimately fails to launch. Either way, the error
-    /// above the failure explains why.
-    func swiftFormatLauncher() -> SwiftFormatLauncher {
+    /// Returns nil when Linux discovery fails. The caller reports
+    /// `swiftFormatNotFoundMessage` at the severity its own contract calls for:
+    /// Persnoop warns and skips (or fails in strict mode), Persnipe fails.
+    func swiftFormatLauncher() -> SwiftFormatLauncher? {
         if let override = swiftFormatOverridePath() {
             return SwiftFormatLauncher(
                 executable: URL(fileURLWithPath: override),
@@ -176,33 +263,32 @@ struct Persnipe: CommandPlugin {
             leadingArguments: ["swift-format"]
         )
         #else
-        if let resolved = resolveLinuxSwiftFormatPath() {
-            return SwiftFormatLauncher(
-                executable: URL(fileURLWithPath: resolved),
-                leadingArguments: []
-            )
+        guard let resolved = resolveLinuxSwiftFormatPath() else {
+            return nil
         }
-        Diagnostics.error(
-            """
-            swift-format binary not found.
-
-            Searched (in order):
-              1. $SWIFT_FORMAT environment variable
-              2. Sibling of `swift` on $PATH (canonical Swift toolchain location)
-              3. /usr/local/bin/swift-format
-              4. /usr/bin/swift-format
-              5. swift-format on $PATH
-
-            Most Linux Swift toolchains ship swift-format in the same directory as `swift`. \
-            If your setup differs, set the SWIFT_FORMAT environment variable to an absolute path. \
-            See https://github.com/HeirloomLogic/Persnicket#how-it-works
-            """
-        )
         return SwiftFormatLauncher(
-            executable: URL(fileURLWithPath: "/usr/bin/env"),
-            leadingArguments: ["swift-format"]
+            executable: URL(fileURLWithPath: resolved),
+            leadingArguments: []
         )
         #endif
+    }
+
+    /// Explains a failed Linux discovery; `outcome` says what the plugin does about it.
+    func swiftFormatNotFoundMessage(outcome: String) -> String {
+        """
+        swift-format binary not found — \(outcome).
+
+        Searched (in order):
+          1. $SWIFT_FORMAT environment variable
+          2. Sibling of `swift` on $PATH (canonical Swift toolchain location)
+          3. /usr/local/bin/swift-format
+          4. /usr/bin/swift-format
+          5. swift-format on $PATH
+
+        Most Linux Swift toolchains ship swift-format in the same directory as `swift`. \
+        If your setup differs, set the SWIFT_FORMAT environment variable to an absolute path. \
+        See https://github.com/HeirloomLogic/Persnicket#how-it-works
+        """
     }
 
     /// Returns the `$SWIFT_FORMAT` override — an absolute path to a `swift-format`
@@ -298,16 +384,73 @@ struct Persnipe: CommandPlugin {
     }
     #endif
 
+    /// Options every swift-format invocation passes — the preflight probe included, so
+    /// a `$SWIFT_FORMAT` binary too old to know one of them fails the probe rather than
+    /// the build. `--follow-symlinks` because swift-format otherwise silently skips a
+    /// source file that is a symlink, even when it is named explicitly.
+    var commonSwiftFormatOptions: [String] {
+        ["--parallel", "--follow-symlinks"]
+    }
+
+    /// The toolchain-selection variables the build-tool plugin forwards to its prebuild
+    /// command. SwiftPM runs prebuild commands with a scrubbed environment, so without
+    /// them `xcrun` in the lint would resolve the xcode-select toolchain even when the
+    /// plugin — and its preflight probe — ran under a different `DEVELOPER_DIR`.
+    func toolchainSelectionEnvironment() -> [String: String] {
+        #if os(macOS)
+        let environment = ProcessInfo.processInfo.environment
+        var forwarded: [String: String] = [:]
+        for key in ["DEVELOPER_DIR", "TOOLCHAINS"] {
+            if let value = environment[key], !value.isEmpty {
+                forwarded[key] = value
+            }
+        }
+        return forwarded
+        #else
+        return [:]
+        #endif
+    }
+
+    /// Pins `DEVELOPER_DIR` to the Xcode that owns `swiftFormat` — the host's own
+    /// `swift-format` as `context.tool(named:)` reports it — unless the environment
+    /// already selects a toolchain. Xcode runs plugins without `DEVELOPER_DIR`, so
+    /// `xcrun` would otherwise resolve the xcode-select Xcode even when a different
+    /// Xcode is running the build, and lint with the wrong swift-format. Everything
+    /// downstream — the probe, its cache key, the forwarded prebuild environment —
+    /// reads the variable, so setting it once keeps them all on the building Xcode.
+    func pinDeveloperDirectory(toXcodeOf swiftFormat: URL?) {
+        #if os(macOS)
+        let environment = ProcessInfo.processInfo.environment
+        guard (environment["DEVELOPER_DIR"] ?? "").isEmpty,
+            (environment["TOOLCHAINS"] ?? "").isEmpty,
+            let path = swiftFormat?.path(percentEncoded: false)
+        else {
+            return
+        }
+        // Only an Xcode's default toolchain maps back to a developer directory; a
+        // standalone toolchain or a $PATH binary leaves xcrun's own choice in place.
+        let suffix = "/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-format"
+        guard path.hasSuffix(suffix) else {
+            return
+        }
+        setenv("DEVELOPER_DIR", String(path.dropLast(suffix.count)), 1)
+        #endif
+    }
+
     // MARK: Configuration Resolution
 
-    /// Looks for `.swift-format` in the downstream project root.
+    /// Looks for `.swift-format` in the downstream project root, falling back to an
+    /// embedded default written to the plugin work directory.
     ///
-    /// Falls back to an embedded default written to the plugin work directory.
+    /// Returns nil — after emitting an error — when the configuration is unusable
+    /// (unreadable, a directory, or not a JSON object). Callers must stop: every
+    /// swift-format invocation would fail on it, and follow-up diagnostics would only
+    /// misattribute the problem to the toolchain.
     func resolveConfiguration(
         launcher: SwiftFormatLauncher,
         projectRoot: URL,
         pluginWorkDirectory: URL
-    ) throws -> String {
+    ) throws -> String? {
         let resolvedPath: String
         let projectConfig = projectRoot.appendingPathComponent(".swift-format")
         if FileManager.default.fileExists(atPath: projectConfig.path) {
@@ -317,7 +460,10 @@ struct Persnipe: CommandPlugin {
             resolvedPath = projectConfig.path
         } else {
             let fallbackURL = pluginWorkDirectory.appendingPathComponent("swift-format-fallback.json")
-            try fallbackConfigJSON.write(to: fallbackURL, atomically: true, encoding: .utf8)
+            // Rewrite only on change, so the file's mtime stays stable across builds.
+            if (try? String(contentsOf: fallbackURL, encoding: .utf8)) != fallbackConfigJSON {
+                try fallbackConfigJSON.write(to: fallbackURL, atomically: true, encoding: .utf8)
+            }
             Diagnostics.remark(
                 """
                 No .swift-format found in project root, using the bundled fallback configuration.
@@ -330,45 +476,34 @@ struct Persnipe: CommandPlugin {
             resolvedPath = fallbackURL.path
         }
 
-        emitPreflightDiagnostics(launcher: launcher, configPath: resolvedPath)
-        return resolvedPath
-    }
-
-    /// Emits an up-front summary of the config/toolchain so that when swift-format
-    /// fails downstream with its cryptic `<unknown>: error: Unable to read configuration`,
-    /// the context needed to diagnose the failure is already in the log above it.
-    private func emitPreflightDiagnostics(launcher: SwiftFormatLauncher, configPath: String) {
-        switch validateConfig(at: configPath) {
+        switch validateConfig(at: resolvedPath) {
         case .ok(let version):
-            let versionString = version.map(String.init) ?? "unknown"
             Diagnostics.remark(
                 """
                 swift-format plugin preflight:
-                • config: \(configPath)
-                • version: \(versionString)
+                • config: \(resolvedPath)
+                • version: \(version.map(String.init) ?? "unknown")
                 • executable: \(launcher.displayCommand)
-
-                • If swift-format reports "Unable to read configuration", the most likely cause \
-                is a mismatch between the active toolchain's bundled swift-format and the schema \
-                used by this config. The config "version" field does not always change between \
-                incompatible schemas, so breaks can be silent.
                 """
             )
+            return resolvedPath
         case .invalid(let reason):
+            // swift-format's own report of this is "Unable to read configuration",
+            // without naming the file — so name it here.
             Diagnostics.error(
                 """
-                The swift-format configuration at \(configPath) failed to parse as JSON: \(reason)
-                • swift-format reports "<unknown>: error: Unable to read configuration" without \
-                  naming the file. Please fix the JSON above before rerunning.
+                The swift-format configuration at \(resolvedPath) is unusable: \(reason)
+                Fix the file and try again.
                 """
             )
+            return nil
         }
     }
 
     /// Best-effort probe of the active swift-format's `--version` output.
     ///
     /// Surfaces the toolchain version that would otherwise be invisible in logs.
-    private func logSwiftFormatVersion(launcher: SwiftFormatLauncher) {
+    func logSwiftFormatVersion(launcher: SwiftFormatLauncher) {
         let process = Process()
         process.executableURL = launcher.executable
         process.arguments = launcher.leadingArguments + ["--version"]
@@ -392,24 +527,109 @@ struct Persnipe: CommandPlugin {
         }
     }
 
+    // MARK: Failure Classification
+
+    /// Sorts a failed swift-format run by remedy, from its stderr.
+    func classifySwiftFormatFailure(stderr: String) -> SwiftFormatFailure {
+        let lower = stderr.lowercased()
+        // xcrun's report when the active toolchain has no swift-format. (On Linux the
+        // launcher is an absolute path that discovery verified, so a missing binary
+        // surfaces as a launch error instead.)
+        if lower.contains("unable to find utility") {
+            return .missingExecutable
+        }
+        if lower.contains("unable to read configuration")
+            || lower.contains("invalid configuration")
+        {
+            return .configuration
+        }
+        // swift-argument-parser's report of a flag this swift-format predates, such as
+        // `--follow-symlinks` on a pre-6.0 `$SWIFT_FORMAT`.
+        if lower.contains("unknown option") {
+            return .unsupportedOption
+        }
+        return .other
+    }
+
+    /// "exit status N", or "terminated by signal N" when the process was killed —
+    /// `terminationStatus` alone can't tell the two apart.
+    func describeTermination(of process: Process) -> String {
+        process.terminationReason == .uncaughtSignal
+            ? "terminated by signal \(process.terminationStatus)"
+            : "exit status \(process.terminationStatus)"
+    }
+
+    /// Explains a configuration swift-format refused; `outcome` says what the plugin
+    /// does about it.
+    func configFailureMessage(
+        launcher: SwiftFormatLauncher,
+        configPath: String,
+        stderr: String,
+        outcome: String
+    ) -> String {
+        var version: Int?
+        if case .ok(let v) = validateConfig(at: configPath) { version = v }
+        return """
+            swift-format cannot use the configuration — \(outcome).
+
+            Either the configuration contains a setting this swift-format rejects, or the \
+            active toolchain's swift-format expects a different configuration schema. \
+            swift-format's message below says which setting it could not read.
+
+            --- swift-format stderr ---
+            \(stderr.trimmingCharacters(in: .whitespacesAndNewlines))
+            ---------------------------
+
+            • config: \(configPath)  (version: \(version.map(String.init) ?? "unknown"))
+            • executable: \(launcher.displayCommand)
+            • Fix: correct the setting, or align the toolchain with the configuration — \
+            upgrade the toolchain, or pin the config to a schema the active toolchain accepts.
+            """
+    }
+
+    /// Explains a swift-format that could not be launched at all; `outcome` says what
+    /// the plugin does about it.
+    func missingExecutableMessage(launcher: SwiftFormatLauncher, stderr: String, outcome: String) -> String {
+        """
+        swift-format could not be launched — \(outcome).
+
+        The `swift-format` binary is missing from the active toolchain. This is a \
+        toolchain/CI setup issue, not a source code or configuration problem.
+
+        --- launcher stderr ---
+        \(stderr.trimmingCharacters(in: .whitespacesAndNewlines))
+        -----------------------
+
+        • executable: \(launcher.displayCommand)
+        • Fix: install a Swift toolchain that bundles swift-format (Swift 6.0+), \
+        or set the SWIFT_FORMAT environment variable to the absolute path of \
+        a swift-format binary.
+        """
+    }
+
     // MARK: Preflight Probe
 
-    /// Runs swift-format against a trivial file to verify the config is parseable,
-    /// caching a successful verdict so unchanged incremental builds pay nothing.
+    /// Runs swift-format against a trivial file to verify it launches and accepts the
+    /// config, caching a successful verdict so unchanged incremental builds pay nothing.
+    /// `strict` must match the real lint: under `--strict`, a config warning such as an
+    /// unrecognized rule fails the run, where otherwise it passes.
     ///
     /// This catches config/toolchain mismatches before SPM's prebuild command runs —
     /// where a non-zero exit would fail the build. The verdict is cached in the
     /// persistent per-target work directory, keyed on the config bytes and the resolved
     /// toolchain; on a cache hit the probe subprocess is skipped entirely. Only `.ok`
-    /// is cached — a failing config or missing binary re-probes every build so the
-    /// diagnostic keeps surfacing (and, in strict mode, keeps failing) until it is fixed.
+    /// is cached — any failure re-probes every build so the diagnostic keeps surfacing
+    /// (and, in strict mode, keeps failing) until it is fixed.
     func probeSwiftFormat(
         launcher: SwiftFormatLauncher,
         configPath: String,
+        strict: Bool,
         pluginWorkDirectory: URL
     ) -> ProbeResult {
-        let cacheURL = pluginWorkDirectory.appendingPathComponent("preflight-cache.v1")
-        let cacheKey = preflightCacheKey(configPath: configPath, launcher: launcher)
+        let cacheURL = pluginWorkDirectory.appendingPathComponent("preflight-cache.v2")
+        let cacheKey = preflightCacheKey(configPath: configPath, launcher: launcher).map {
+            "\($0)|strict:\(strict)"
+        }
         if let cacheKey,
             let cached = try? String(contentsOf: cacheURL, encoding: .utf8),
             cached == cacheKey
@@ -436,8 +656,7 @@ struct Persnipe: CommandPlugin {
         let process = Process()
         process.executableURL = launcher.executable
         process.arguments =
-            launcher.leadingArguments + [
-                "lint",
+            launcher.leadingArguments + ["lint"] + commonSwiftFormatOptions + (strict ? ["--strict"] : []) + [
                 "--configuration",
                 configPath,
                 probeFile.path,
@@ -449,54 +668,41 @@ struct Persnipe: CommandPlugin {
 
         do {
             try process.run()
-            let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-
-            guard process.terminationStatus != EXIT_SUCCESS else {
-                if let cacheKey {
-                    try? cacheKey.write(to: cacheURL, atomically: true, encoding: .utf8)
-                }
-                return .ok
-            }
-
-            let stderr = String(data: stderrData, encoding: .utf8) ?? ""
-            let lower = stderr.lowercased()
-            // xcrun on macOS: "unable to find utility"; /usr/bin/env on Linux:
-            // "No such file or directory". Both mean the binary is missing, which
-            // needs a different remedy than a config/toolchain schema mismatch.
-            if lower.contains("unable to find utility")
-                || lower.contains("no such file or directory")
-            {
-                return .missingExecutable(stderr: stderr)
-            }
-            if lower.contains("unable to read configuration")
-                || lower.contains("invalid configuration")
-                || lower.contains("unknown argument")
-            {
-                return .configError(stderr: stderr)
-            }
-            Diagnostics.remark(
-                """
-                swift-format preflight probe exited with status \(process.terminationStatus) \
-                for an unrecognized reason. Linting will proceed — if it fails, check the \
-                stderr output above.
-                """
-            )
-            return .ok
         } catch {
-            Diagnostics.remark(
-                """
-                swift-format preflight probe skipped: could not launch \
-                process (\(error.localizedDescription)).
-                """
-            )
+            // The prebuild command would fail to launch the same way.
+            return .missingExecutable(stderr: error.localizedDescription)
+        }
+        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+
+        guard process.terminationReason != .exit || process.terminationStatus != EXIT_SUCCESS else {
+            if let cacheKey {
+                try? cacheKey.write(to: cacheURL, atomically: true, encoding: .utf8)
+            }
             return .ok
+        }
+
+        // The probe file is a lone comment, which no rule flags, so only a launch,
+        // config, or toolchain problem can fail it — and would fail the real lint too.
+        let stderr = String(data: stderrData, encoding: .utf8) ?? ""
+        switch classifySwiftFormatFailure(stderr: stderr) {
+        case .missingExecutable:
+            return .missingExecutable(stderr: stderr)
+        case .configuration:
+            return .configError(stderr: stderr)
+        case .other where strict && stderr.lowercased().contains("unrecognized rule"):
+            // Only a warning, but `--strict` fails the run on it, and the probe file
+            // has nothing else to fail on.
+            return .configError(stderr: stderr)
+        case .unsupportedOption, .other:
+            return .failed(stderr: stderr, termination: describeTermination(of: process))
         }
     }
 
     /// A cheap, subprocess-free fingerprint of everything that changes the probe
-    /// verdict: the config's bytes and the resolved toolchain. Returns nil when the
-    /// config cannot be read, which forces the probe to run.
+    /// verdict: the config's bytes, how the toolchain is selected, and the swift-format
+    /// binary that will run. Returns nil when the config cannot be read, which forces
+    /// the probe to run.
     private func preflightCacheKey(configPath: String, launcher: SwiftFormatLauncher) -> String? {
         guard let configData = try? Data(contentsOf: URL(fileURLWithPath: configPath)) else {
             return nil
@@ -506,24 +712,57 @@ struct Persnipe: CommandPlugin {
             "exec:\(launcher.displayCommand)",
         ]
         #if os(macOS)
-        // `xcrun` dispatches to the active Xcode, so the executable path alone can't
-        // see a toolchain switch; the xcode-select symlink target catches it without
-        // spawning a process.
-        if let developerDir = try? FileManager.default.destinationOfSymbolicLink(
+        let environment = ProcessInfo.processInfo.environment
+        parts.append("DEVELOPER_DIR=\(environment["DEVELOPER_DIR"] ?? "")")
+        parts.append("TOOLCHAINS=\(environment["TOOLCHAINS"] ?? "")")
+        #endif
+        // Size, mtime, and inode of the real binary catch an in-place toolchain update
+        // (an App Store Xcode update, a retargeted symlink) that leaves every path as is.
+        if let binary = swiftFormatBinaryPath(launcher: launcher) {
+            let realPath = URL(fileURLWithPath: binary).resolvingSymlinksInPath().path
+            if let attributes = try? FileManager.default.attributesOfItem(atPath: realPath) {
+                let size = (attributes[.size] as? Int) ?? -1
+                let mtime = (attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+                let inode = (attributes[.systemFileNumber] as? Int) ?? -1
+                parts.append("bin:\(realPath):\(size):\(mtime):\(inode)")
+            }
+        }
+        return parts.joined(separator: "|")
+    }
+
+    /// The swift-format binary `launcher` will run, located without spawning a process.
+    /// For `xcrun` this mirrors its default lookup — `DEVELOPER_DIR`, else the
+    /// xcode-select link, else the Command Line Tools — and returns nil if the binary
+    /// is not where that lookup expects (a `TOOLCHAINS` override is keyed separately).
+    private func swiftFormatBinaryPath(launcher: SwiftFormatLauncher) -> String? {
+        #if os(macOS)
+        guard launcher.executable.path == "/usr/bin/xcrun" else {
+            return launcher.executable.path
+        }
+        var developerDir: String
+        if let fromEnvironment = ProcessInfo.processInfo.environment["DEVELOPER_DIR"],
+            !fromEnvironment.isEmpty
+        {
+            developerDir = fromEnvironment
+        } else if let selected = try? FileManager.default.destinationOfSymbolicLink(
             atPath: "/var/db/xcode_select_link"
         ) {
-            parts.append("xcode:\(developerDir)")
+            developerDir = selected
+        } else {
+            developerDir = "/Library/Developer/CommandLineTools"
         }
+        // DEVELOPER_DIR may name the Xcode bundle itself rather than its Developer dir.
+        if developerDir.hasSuffix(".app") || developerDir.hasSuffix(".app/") {
+            developerDir = URL(fileURLWithPath: developerDir).appendingPathComponent("Contents/Developer").path
+        }
+        let candidates = [
+            developerDir + "/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-format",
+            developerDir + "/usr/bin/swift-format",
+        ]
+        return candidates.first { FileManager.default.fileExists(atPath: $0) }
         #else
-        // On Linux the launcher points straight at the binary, so its size and mtime
-        // fingerprint a toolchain swap.
-        if let attributes = try? FileManager.default.attributesOfItem(atPath: launcher.executable.path) {
-            let size = (attributes[.size] as? Int) ?? -1
-            let mtime = (attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
-            parts.append("bin:\(size):\(mtime)")
-        }
+        return launcher.executable.path
         #endif
-        return parts.joined(separator: "|")
     }
 
     /// A deterministic djb2 hash. `Hasher` is unsuitable here — it is seeded per
@@ -536,66 +775,44 @@ struct Persnipe: CommandPlugin {
         return hash
     }
 
-    /// Emits a diagnostic when the preflight probe detects a config/toolchain
-    /// mismatch. Non-strict builds get a warning and linting is skipped; strict
-    /// builds get an error — silently skipping the lint would defeat the hard
-    /// gate the user opted into.
-    func emitConfigFailure(
+    /// Emits the diagnostic for a failed preflight probe. Non-strict builds get a
+    /// warning and linting is skipped; strict builds get an error — silently skipping
+    /// the lint would defeat the hard gate the user opted into.
+    func emitProbeFailure(
+        _ result: ProbeResult,
         launcher: SwiftFormatLauncher,
         configPath: String,
-        stderr: String,
         strict: Bool
     ) {
-        var version: Int?
-        if case .ok(let v) = validateConfig(at: configPath) { version = v }
-        let versionString = version.map(String.init) ?? "unknown"
         let outcome = strict ? "failing the build (strict mode)" : "linting skipped"
-        let message = """
-            swift-format cannot parse the configuration — \(outcome).
+        let message: String
+        switch result {
+        case .ok:
+            return
+        case .configError(let stderr):
+            message = configFailureMessage(
+                launcher: launcher,
+                configPath: configPath,
+                stderr: stderr,
+                outcome: outcome
+            )
+        case .missingExecutable(let stderr):
+            message = missingExecutableMessage(launcher: launcher, stderr: stderr, outcome: outcome)
+        case .failed(let stderr, let termination):
+            let trimmed = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            message = """
+                swift-format failed its preflight check (\(termination)) — \(outcome).
 
-            The active toolchain's swift-format is incompatible with the config schema. \
-            This is a CI/toolchain setup issue, not a source code problem.
+                The check lints a one-line file, so the real lint would fail the same way.
 
-            --- swift-format stderr ---
-            \(stderr.trimmingCharacters(in: .whitespacesAndNewlines))
-            ---------------------------
+                --- swift-format stderr ---
+                \(trimmed.isEmpty ? "(empty)" : trimmed)
+                ---------------------------
 
-            • config: \(configPath)  (version: \(versionString))
-            • executable: \(launcher.displayCommand)
-            • Fix: upgrade the toolchain to match the config schema, or pin \
-            the config to an older schema compatible with the active toolchain.
-            """
-        if strict {
-            Diagnostics.error(message)
-        } else {
-            Diagnostics.warning(message)
+                • config: \(configPath)
+                • executable: \(launcher.displayCommand)
+                """
         }
-    }
-
-    /// Emits a diagnostic when the preflight probe cannot launch `swift-format`
-    /// at all (missing from the toolchain). Non-strict builds get a warning and
-    /// linting is skipped; strict builds get an error.
-    func emitMissingExecutableFailure(
-        launcher: SwiftFormatLauncher,
-        stderr: String,
-        strict: Bool
-    ) {
-        let outcome = strict ? "failing the build (strict mode)" : "linting skipped"
-        let message = """
-            swift-format could not be launched — \(outcome).
-
-            The `swift-format` binary is missing from the active toolchain. This is a \
-            toolchain/CI setup issue, not a source code or configuration problem.
-
-            --- launcher stderr ---
-            \(stderr.trimmingCharacters(in: .whitespacesAndNewlines))
-            -----------------------
-
-            • executable: \(launcher.displayCommand)
-            • Fix: install a Swift toolchain that bundles swift-format (Swift 6.0+), \
-            or set the SWIFT_FORMAT environment variable to the absolute path of \
-            a swift-format binary.
-            """
         if strict {
             Diagnostics.error(message)
         } else {
@@ -667,6 +884,14 @@ enum ProbeResult {
     case ok
     case configError(stderr: String)
     case missingExecutable(stderr: String)
+    case failed(stderr: String, termination: String)
+}
+
+enum SwiftFormatFailure {
+    case missingExecutable
+    case configuration
+    case unsupportedOption
+    case other
 }
 
 struct PluginError: Error, CustomStringConvertible {
@@ -680,22 +905,52 @@ enum ConfigValidation {
 }
 
 /// Parses the swift-format config at `path` and returns its `version` field if present.
+///
+/// Parses as JSON5 — comments, trailing commas, unquoted keys — because swift-format
+/// itself does from 602 (Swift 6.2) on, so a config it accepts must not be rejected
+/// here. On an older toolchain, JSON5 syntax fails the preflight probe instead, as
+/// the config/toolchain mismatch it is.
 func validateConfig(at path: String) -> ConfigValidation {
-    let url = URL(fileURLWithPath: path)
+    var isDirectory: ObjCBool = false
+    if FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue {
+        return .invalid(reason: "it is a directory, not a file.")
+    }
     let data: Data
     do {
-        data = try Data(contentsOf: url)
+        data = try Data(contentsOf: URL(fileURLWithPath: path))
     } catch {
         return .invalid(reason: "could not read file: \(error.localizedDescription)")
     }
+    let decoder = JSONDecoder()
+    decoder.allowsJSON5 = true
     do {
-        let object = try JSONSerialization.jsonObject(with: data)
-        guard let dict = object as? [String: Any] else {
-            return .invalid(reason: "top-level JSON value is not an object")
-        }
-        return .ok(version: dict["version"] as? Int)
+        return .ok(version: try decoder.decode(ConfigHeader.self, from: data).version)
+    } catch DecodingError.typeMismatch, DecodingError.valueNotFound {
+        // `valueNotFound` is a top-level `null`.
+        return .invalid(reason: "the top-level JSON value is not an object.")
+    } catch DecodingError.dataCorrupted(let context) {
+        // The underlying parser error carries the line and column.
+        let underlying = context.underlyingError.map { $0 as NSError }
+        let detail = underlying?.userInfo[NSDebugDescriptionErrorKey] as? String
+        return .invalid(reason: "not valid JSON: \(detail ?? context.debugDescription)")
     } catch {
-        return .invalid(reason: error.localizedDescription)
+        return .invalid(reason: "not valid JSON: \(error)")
+    }
+}
+
+/// The one field of a swift-format configuration the plugins read. Decoding it also
+/// checks that the file is a JSON object.
+private struct ConfigHeader: Decodable {
+    let version: Int?
+
+    private enum CodingKeys: String, CodingKey {
+        case version
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        // Only shown in diagnostics; a malformed version is swift-format's to report.
+        version = try? container.decodeIfPresent(Int.self, forKey: .version)
     }
 }
 
