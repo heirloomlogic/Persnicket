@@ -27,11 +27,6 @@ extension Persnipe: XcodeCommandPlugin {
         }
 
         pinDeveloperDirectory(toXcodeOf: try? context.tool(named: "swift-format").url)
-        let (launcher, configPath) = try prepareSwiftFormat(
-            projectRoot: context.xcodeProject.directoryURL,
-            pluginWorkDirectory: context.pluginWorkDirectoryURL
-        )
-
         // Format only the Swift sources that belong to the requested targets.
         // Formatting the project directory recursively would also rewrite
         // vendored and generated Swift code that the project doesn't own.
@@ -57,6 +52,12 @@ extension Persnipe: XcodeCommandPlugin {
             return
         }
 
+        let (launcher, configuration) = try prepareSwiftFormat(
+            projectRoot: context.xcodeProject.directoryURL,
+            sourceFiles: swiftFilePaths.map { URL(fileURLWithPath: $0) },
+            pluginWorkDirectory: context.pluginWorkDirectoryURL
+        )
+
         // One invocation for the whole project: swift-format carries on past a file it
         // can't parse, so a single bad file doesn't stop the rest from being formatted.
         var reportedLines = Set<String>()
@@ -64,7 +65,7 @@ extension Persnipe: XcodeCommandPlugin {
             filePaths: swiftFilePaths,
             scope: "project \"\(context.xcodeProject.displayName)\"",
             launcher: launcher,
-            configPath: configPath,
+            configuration: configuration,
             reportedLines: &reportedLines
         ) {
         case .formatted:

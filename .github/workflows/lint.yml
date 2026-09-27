@@ -69,6 +69,9 @@ jobs:
       - name: Compile-check plugins via consumer fixture
         run: ./bin/ci-verify-compile-check
 
+      - name: Verify hierarchical configurations and skip transitions
+        run: ./Examples/CompileCheck/verify-configuration.sh
+
       - name: Verify visible incremental lint and large source sets
         working-directory: Examples/CompileCheck
         run: ./verify-large-target.sh
@@ -199,6 +202,9 @@ jobs:
       - name: Compile-check plugins via consumer fixture
         run: ./bin/ci-verify-compile-check
 
+      - name: Verify hierarchical configurations and skip transitions
+        run: ./Examples/CompileCheck/verify-configuration.sh
+
       - name: Verify visible incremental lint and large source sets
         working-directory: Examples/CompileCheck
         run: ./verify-large-target.sh
@@ -312,6 +318,9 @@ jobs:
 
       - name: Compile-check plugins via consumer fixture
         run: ./bin/ci-verify-compile-check
+
+      - name: Verify hierarchical configurations and skip transitions
+        run: ./Examples/CompileCheck/verify-configuration.sh
 
       - name: Verify visible incremental lint and large source sets
         working-directory: Examples/CompileCheck

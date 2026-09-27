@@ -15,7 +15,7 @@ A lightweight SPM plugin that lints and formats Swift source files. Its only dep
 
 | Plugin | Type | What it does |
 |---|---|---|
-| **Persnoop** | Build Tool | Runs `swift-format lint` when a target's Swift sources or project-root configuration change. Violations appear as build warnings in Xcode and `swift build`, or fail the build in opt-in strict mode. |
+| **Persnoop** | Build Tool | Runs `swift-format lint` when a target's Swift sources or applicable configurations change. Violations appear as build warnings in Xcode and `swift build`, or fail the build in opt-in strict mode. |
 | **Persnipe** | Command | Runs `swift-format format --in-place` on demand to reformat source files. |
 
 Both plugins work with Swift Package Manager. On macOS, Xcode project integration is also supported.
@@ -44,7 +44,7 @@ Or in Xcode: **File → Add Package Dependencies** and enter the repository URL.
 
 ### Build Tool Plugin (automatic linting)
 
-Apply the plugin to any target you want linted when its Swift sources or project-root configuration change:
+Apply the plugin to any target you want linted when its Swift sources or applicable configurations change:
 
 ```swift
 .target(
@@ -57,7 +57,7 @@ Apply the plugin to any target you want linted when its Swift sources or project
 
 In Xcode and `swift build`, lint violations are reported as build warnings when lint runs, and they do not fail the build. Like incremental compiler warnings, they are not replayed on later no-op builds.
 
-Persnoop declares the source files and resolved configuration as command inputs and includes the preflight tool/config identity in each lint command. After each successful lint chunk, it writes a generated `.swift` file containing one comment; SwiftPM uses that stamp to skip unchanged lint work. These stamps add no declarations or executable code, but they are generated sources in the target's build graph. If the source set shrinks or lint is skipped after a failed probe, unused stamps remain until the build directory is cleaned so SwiftPM can keep its generated-source list valid.
+Persnoop declares the source files and applicable configurations as command inputs and includes the preflight tool/config identity in each lint command. After each successful lint chunk, it writes a generated `.swift` file containing one comment; SwiftPM uses that stamp to skip unchanged lint work. These stamps add no declarations or executable code, but they are generated sources in the target's build graph. If the source set shrinks or lint is skipped, unused stamps remain until the build directory is cleaned so SwiftPM can keep its generated-source list valid.
 
 A small planning command refreshes a marker on each build so native SwiftPM re-evaluates configuration removal, configuration addition, and formatter replacement. Its separate comment-only Swift stamp is written once. This adds planning work to unchanged builds; the cached preflight probe and unchanged lint chunks still skip execution.
 
@@ -89,7 +89,7 @@ The command plugin registers the SwiftPM built-in `format-source-code` verb. Run
 swift package plugin --allow-writing-to-package-directory format-source-code
 ```
 
-The plugin runs silently on success — use `git diff` to see what changed. It exits non-zero if `swift-format` can't run or rejects the configuration, in which case nothing is formatted, or if a target fails to format, for example on a syntax error; every other target is still formatted.
+The plugin runs silently on success — use `git diff` to see what changed. It exits non-zero if `swift-format` can't run, rejects a configuration, or fails to format a file. A rejected configuration stops further batches; files processed before the error may already have changed. Syntax errors do not prevent the remaining files from being formatted.
 
 To format only specific targets, pass `--target` (repeatable; `--target=MyTarget` also works):
 
@@ -101,13 +101,24 @@ In Xcode: **right-click your project or package → Persnipe**.
 
 Persnipe formats the Swift sources of your package's source-module targets, including test and executable targets and — from Swift 6.2, whose `swift-format` fixed the handling — source files that are symlinks. Earlier toolchains skip symlinked files, in linting too. Plugin targets are not visible to command plugins, so it can't format them — run `swift-format` on `Plugins/` directly.
 
+### Skipping build-time lint
+
+Set `PERSNICKET_SKIP=1` in the build environment to skip Persnoop, including formatter discovery and configuration checks. Persnoop emits a warning naming the skipped target. This overrides strict mode, including the `.persnicket-strict` sentinel; any other value leaves lint enabled. Persnipe remains available for explicit formatting.
+
+```bash
+PERSNICKET_SKIP=1 swift build
+PERSNICKET_SKIP=1 xcodebuild …
+```
+
+Remove the variable to resume lint. SwiftPM applies the change on the next build. Xcode caches plugin planning, so a toggle may require Product → Clean Build Folder and another build. Pass the variable in the environment; an `xcodebuild` build setting does not reach the plugin.
+
 ## Configuration
 
-The plugin looks for a `.swift-format` configuration file in your **project root**: the directory containing `Package.swift` for a Swift package, or the directory containing the `.xcodeproj` for an Xcode project. If one is found, it will be used for both linting and formatting. If your `.xcodeproj` is not at your repository root (say, `ios/MyApp.xcodeproj` in a monorepo), put `.swift-format` next to the `.xcodeproj`.
+The plugins look for a `.swift-format` configuration file in your **project root**: the directory containing `Package.swift` for a Swift package, or the directory containing the `.xcodeproj` for an Xcode project. When it exists, both plugins let swift-format discover the nearest ancestor `.swift-format` for each source file. Nested configurations replace the root configuration for their files; they do not merge with it. On formatters that support symlinked sources, discovery follows the link to its destination. If your `.xcodeproj` is not at your repository root (say, `ios/MyApp.xcodeproj` in a monorepo), put `.swift-format` next to the `.xcodeproj` to enable discovery.
 
 The file may use JSON5 — comments, trailing commas — as `swift-format` itself accepts from Swift 6.2. An older toolchain's `swift-format` rejects that syntax, which the plugin reports as a config/toolchain mismatch (see [Toolchain Compatibility](#toolchain-compatibility)).
 
-If no `.swift-format` file is present, the plugin falls back to a default configuration. This config is fairly strict, and includes, among other things:
+If no project-root `.swift-format` file is present, the plugins pass their bundled fallback explicitly, so nested configurations are ignored. This config is fairly strict, and includes, among other things:
 
 - 4-space indentation, 120-character line length
 - Ordered imports and trailing commas
@@ -115,7 +126,7 @@ If no `.swift-format` file is present, the plugin falls back to a default config
 - `AllPublicDeclarationsHaveDocumentation`
 - `FileScopedDeclarationPrivacy` set to `private`
 
-The plugin always passes the resolved configuration to `swift-format` explicitly, which disables `swift-format`'s own per-directory config discovery: **only the project-root `.swift-format` applies**. A nested `.swift-format` in a subdirectory (which bare `swift-format` would pick up per-file) is ignored.
+Persnoop validates the root and selected nested configurations, checks them against the active formatter, and tracks them as lint inputs. Adding, editing, or removing a configuration reruns lint on the next SwiftPM build. Xcode may require a build re-plan to pick up configuration additions or removals.
 
 To use your own configuration, create a `.swift-format` file in the root of your project. You can generate a starter configuration with the following:
 
