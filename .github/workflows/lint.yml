@@ -72,6 +72,10 @@ jobs:
           swift build
           swift package plugin --allow-writing-to-package-directory format-source-code
 
+      - name: Verify plugins chunk large source sets
+        working-directory: Examples/CompileCheck
+        run: ./verify-large-target.sh
+
       - name: Verify Persnipe reformats and --target scoping works
         working-directory: Examples/CompileCheck
         run: |
@@ -236,6 +240,10 @@ jobs:
         run: |
           swift build
           swift package plugin --allow-writing-to-package-directory format-source-code
+
+      - name: Verify plugins chunk large source sets
+        working-directory: Examples/CompileCheck
+        run: ./verify-large-target.sh
 
       - name: Verify Persnipe reformats and --target scoping works
         working-directory: Examples/CompileCheck
@@ -472,4 +480,3 @@ jobs:
             exit 1
           fi
           echo "ok: the unusable configuration failed the build"
-

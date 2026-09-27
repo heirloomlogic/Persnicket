@@ -12,6 +12,12 @@ let package = Package(
             plugins: [
                 .plugin(name: "Persnoop", package: "Persnicket")
             ]
-        )
+        ),
+        .target(
+            name: "ArgumentLimitCheck",
+            plugins: [
+                .plugin(name: "Persnoop", package: "Persnicket")
+            ],
+        ),
     ]
 )
