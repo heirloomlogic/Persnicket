@@ -33,29 +33,29 @@ CI will reject your PR if the embedded literals drift from `.swift-format`.
 
 1. Fork the repository and create a branch from `main`.
 2. Make your changes.
-3. Run `xcrun swift-format lint --strict --parallel --recursive --configuration .swift-format Plugins/` and confirm it passes.
-4. If you changed `.swift-format` or anything related to the fallback config, run `bin/regenerate-embedded-fallback`.
+3. Run `xcrun swift-format lint --strict --parallel --recursive --configuration .swift-format Plugins/ Examples/ Package.swift` and confirm it passes.
+4. If you changed `.swift-format` or anything related to the fallback config, run `bin/regenerate-embedded-fallback`. If you changed the shared plugin infrastructure, mirror it into the other plugin and run `bin/check-shared-plugin-code`.
 5. Open a pull request against `main`.
 
 Keep PRs focused — one logical change per PR.
 
 ## CI checks
 
-The GitHub Actions workflow (`.github/workflows/lint.yml`) runs on every PR and push to `main`, on both macOS and Linux:
+The GitHub Actions workflow (`.github/workflows/lint.yml`) runs on every pull request, in three jobs.
 
-1. Regenerates the embedded fallback literals and verifies there is no diff (macOS).
-2. Verifies shared plugin infrastructure is identical across both plugin targets (macOS).
-3. Typechecks the `#if canImport(XcodeProjectPlugin)` Xcode plugin variants against Xcode's
-   PluginAPI (macOS) — `swift build` never compiles them, so this is their only verification.
-4. Runs `swift-format lint --strict` on the plugin source and the example fixture (macOS and Linux).
-5. Compile-checks the plugins via the `Examples/CompileCheck` consumer fixture and runs the
-   `Persnipe` command plugin against it (macOS and Linux — the Linux build covers the
-   `#if !os(macOS)` discovery code paths), asserting that Persnipe actually reformats a
-   misformatted file and that `--target` scoping works.
-6. Verifies `Persnoop`'s opt-in strict mode fails the build on a lint violation, and that the
-   failure is the expected violation (macOS and Linux).
-7. Verifies misconfigured `$SWIFT_FORMAT` overrides warn and fall back to discovery (Linux).
-8. Builds the consumer fixture on a `swift:6.0` container — the advertised minimum toolchain.
+**macOS** (`swift-format (strict)`):
+
+1. Regenerates the embedded fallback literals and verifies there is no diff.
+2. Verifies the shared plugin infrastructure is identical across both plugin targets.
+3. Typechecks the `#if canImport(XcodeProjectPlugin)` Xcode plugin variants against Xcode's PluginAPI — `swift build` never compiles them, so this is their only verification.
+4. Runs `swift-format lint --strict` over `Plugins/`, `Examples/`, and `Package.swift`.
+5. Builds the `Examples/CompileCheck` consumer fixture and runs Persnipe over it, asserting that Persnipe reformats a misformatted file, that `--target` scoping works, that a symlinked source file is formatted through the link, and that a configuration swift-format rejects fails the command.
+6. Verifies Persnoop's strict mode fails the build on a lint violation, and that the failure is the expected violation.
+7. Verifies an unusable `.swift-format` fails the build, and a commented (JSON5) one builds.
+
+**Linux** (`swift:6.2` container) repeats steps 4–7 — covering the `#if !os(macOS)` discovery code paths — and also verifies that misconfigured `$SWIFT_FORMAT` overrides warn and fall back to discovery.
+
+**Swift 6.0 floor** (`swift:6.0.0` container, the advertised minimum) builds the fixture and runs Persnipe, then verifies that strict mode fails on a violation, that strict mode reports rules swift-format 600 doesn't know instead of failing cryptically, that Persnipe fails on a rejected configuration, and that an unusable `.swift-format` fails the build.
 
 All checks must pass before merge.
 

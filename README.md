@@ -15,7 +15,7 @@ A lightweight SPM plugin that lints and formats Swift source files. Its only dep
 
 | Plugin | Type | What it does |
 |---|---|---|
-| **Persnoop** | Build Tool | Runs `swift-format lint` automatically on every build as a pre-build step. Violations appear as build warnings. |
+| **Persnoop** | Build Tool | Runs `swift-format lint` automatically on every build as a pre-build step. Violations appear as build warnings in Xcode, or fail the build in opt-in strict mode. |
 | **Persnipe** | Command | Runs `swift-format format --in-place` on demand to reformat source files. |
 
 Both plugins work with Swift Package Manager. On macOS, Xcode project integration is also supported.
@@ -55,13 +55,17 @@ Apply the plugin to any target you want linted on every build:
 )
 ```
 
-Lint violations are reported as **build warnings** — they show up inline in Xcode and in `swift build` output, but they do not fail the build. (`swift-format lint` only exits non-zero in `--strict` mode, and a failing pre-build step would block compilation entirely.) If you want violations to *fail* a build, either run `swift-format lint --strict` directly in CI (see [CI](#ci) below) or opt into the plugin's strict mode:
+In Xcode, lint violations are reported as **build warnings**, shown inline, and they do not fail the build. (`swift-format lint` only exits non-zero in `--strict` mode, and a failing pre-build step would block compilation entirely.)
+
+**`swift build` does not show them.** SwiftPM discards a pre-build step's output when the step succeeds, so with `swift build` — and so on Linux, where there is no Xcode — a non-strict lint runs on every build and reports nothing. From the command line, see violations by opting into strict mode, where they fail the build as errors, or by running `swift-format lint` directly (see [CI](#ci) below).
+
+If you want violations to *fail* a build, either run `swift-format lint --strict` directly in CI or opt into the plugin's strict mode:
 
 #### Strict mode (opt-in)
 
 To make Persnoop *fail* the build on a violation, opt in with either:
 
-- the **`PERSNICKET_STRICT`** environment variable set to `1`, `true`, or `yes` — convenient for CI and `swift build`; or
+- the **`PERSNICKET_STRICT`** environment variable set to `1`, `true`, or `yes` — convenient for CI and `swift build`. It must be in the environment (`PERSNICKET_STRICT=1 xcodebuild …`); an `xcodebuild` build setting (`xcodebuild … PERSNICKET_STRICT=1`) doesn't reach the plugin; or
 - a **`.persnicket-strict`** file in your project root (`touch .persnicket-strict`). Unlike the environment variable, this is visible to **Xcode GUI builds**, which don't inherit your shell environment.
 
 When either is present, Persnoop passes `--strict` to `swift-format lint`, so violations exit non-zero. Because this is a pre-build step, a violation **halts the build before compilation** — so it's best kept CI-only, or committed as `.persnicket-strict` only when your whole team wants hard local enforcement. Strict mode is off by default.
@@ -83,9 +87,9 @@ The command plugin registers the SwiftPM built-in `format-source-code` verb. Run
 swift package plugin --allow-writing-to-package-directory format-source-code
 ```
 
-The plugin runs silently on success — use `git diff` to see what changed.
+The plugin runs silently on success — use `git diff` to see what changed. It exits non-zero if `swift-format` can't run or rejects the configuration, in which case nothing is formatted, or if a target fails to format, for example on a syntax error; every other target is still formatted.
 
-To format only specific targets, pass `--target` (repeatable):
+To format only specific targets, pass `--target` (repeatable; `--target=MyTarget` also works):
 
 ```bash
 swift package plugin --allow-writing-to-package-directory format-source-code --target MyTarget
@@ -93,9 +97,13 @@ swift package plugin --allow-writing-to-package-directory format-source-code --t
 
 In Xcode: **right-click your project or package → Persnipe**.
 
+Persnipe formats the Swift sources of your package's source-module targets, including test and executable targets and — from Swift 6.2, whose `swift-format` fixed the handling — source files that are symlinks. Earlier toolchains skip symlinked files, in linting too. Plugin targets are not visible to command plugins, so it can't format them — run `swift-format` on `Plugins/` directly.
+
 ## Configuration
 
-The plugin looks for a `.swift-format` configuration file in your **project root**. If one is found, it will be used for both linting and formatting.
+The plugin looks for a `.swift-format` configuration file in your **project root**: the directory containing `Package.swift` for a Swift package, or the directory containing the `.xcodeproj` for an Xcode project. If one is found, it will be used for both linting and formatting. If your `.xcodeproj` is not at your repository root (say, `ios/MyApp.xcodeproj` in a monorepo), put `.swift-format` next to the `.xcodeproj`.
+
+The file may use JSON5 — comments, trailing commas — as `swift-format` itself accepts from Swift 6.2. An older toolchain's `swift-format` rejects that syntax, which the plugin reports as a config/toolchain mismatch (see [Toolchain Compatibility](#toolchain-compatibility)).
 
 If no `.swift-format` file is present, the plugin falls back to a default configuration. This config is fairly strict, and includes, among other things:
 
@@ -156,7 +164,7 @@ jobs:
 
       - name: Setup swift-format lint
         run: |
-          swift package resolve
+          swift package resolve --force-resolved-versions
           .build/checkouts/Persnicket/bin/ci-lint-setup
 
       - name: Lint (strict)
@@ -167,16 +175,17 @@ Three things in that skeleton are worth copying deliberately: the `actions/check
 
 On Linux, run the job in the official Swift image — `runs-on: ubuntu-latest` with `container: swift:6.2` — and drop the `xcrun` prefix from the lint command. `swift-format` ships inside the toolchain, so the image needs no separate install step. Use the full image rather than a `-slim` variant, which omits the compiler. The setup script itself is portable `sh` and runs unchanged.
 
-`swift-actions/setup-swift` also works and is what this repo used until 2026-08. Its latest stable release (`v2.4.0`) still declares `using: node20`, and Node 20 reached end of life on 2026-04-30; the only newer tag is a prerelease on the same runtime. The container avoids that, pins the compiler exactly, and removes a third-party action from the job. It is not faster: pulling the image costs about what installing the toolchain did.
+`swift-actions/setup-swift` also works and is what this repo used until 2026-08. Its latest stable release (`v2.4.0`) still declares `using: node20`, and Node 20 reached end of life on 2026-04-30; the only newer tag is a prerelease on the same runtime. The container avoids that, pins the compiler's major.minor version, and removes a third-party action from the job. It is not faster: pulling the image costs about what installing the toolchain did.
 
 **Caveats:**
 
 - Inline annotations on the PR "Files changed" tab only show for lines that are part of the diff. Violations on unchanged lines still appear in the workflow run summary.
 - GitHub caps workflow-command annotations at 10 errors and 10 warnings shown inline per run; the remainder are listed in the run summary. For typical PRs this is fine — for a first-time lint sweep across a large codebase, run `swift-format lint` locally for the full list.
 - `ci-lint-setup` refreshes `.github/swift-format-matcher.json` from this package on every run. If you've customized that file, your changes will be overwritten — rename your copy and register it with your own `::add-matcher::` command instead.
-- Run `ci-lint-setup` from the workspace root: the runner resolves the `::add-matcher::` path relative to `GITHUB_WORKSPACE`, not the step's `working-directory`.
-- The matcher stays registered for the rest of the job, and its pattern also matches `swiftc` compiler diagnostics from later build steps. If that produces duplicate or mis-attributed annotations, emit `echo "::remove-matcher owner=swift-format::"` after the lint step.
-- The `swift package resolve` approach above executes a script out of a floating dependency checkout. Commit your `Package.resolved` so the checkout is pinned to a version you've reviewed.
+- Run `ci-lint-setup` from your project root: it writes `.swift-format` and `.github/swift-format-matcher.json` into the current directory. The matcher registers from any directory, including a monorepo subproject.
+- Configuration diagnostics, such as `<unknown>: warning: Configuration contains an unrecognized rule`, name no file, so they appear as annotations on the workflow run rather than inline.
+- The matchers stay registered for the rest of the job, and the file-and-line pattern also matches `swiftc` compiler diagnostics from later build steps. If that produces duplicate or mis-attributed annotations, emit `echo "::remove-matcher owner=swift-format::"` and `echo "::remove-matcher owner=swift-format-config::"` after the lint step.
+- The setup step executes a script out of a dependency checkout. Commit your `Package.resolved` so the checkout is pinned to a version you've reviewed: `--force-resolved-versions` then makes the step fail, rather than silently resolving the newest matching tag, if `Package.resolved` is missing or doesn't pin Persnicket.
 
 ## Toolchain Compatibility
 
@@ -184,12 +193,13 @@ Match the Swift toolchain on your CI runner to the one on your development machi
 
 The `swift-format` configuration format has previously shipped breaking changes without a version bump. A `.swift-format` file that parses cleanly under one Swift minor version may fail under another. If local dev and CI drift, you could see lint failures that can't be reproduced locally.
 
-When the plugin detects that the active toolchain's `swift-format` cannot parse the configuration (or that the binary is missing entirely), it emits a warning and **skips linting rather than failing the build**. Keep an eye out for the `linting skipped` warning — a passing build does not guarantee the linter actually ran. Two exceptions:
+When Persnoop detects that the active toolchain's `swift-format` rejects the configuration (or that the binary is missing entirely), it emits a warning and **skips linting rather than failing the build**. Keep an eye out for the `linting skipped` warning — a passing build does not guarantee the linter actually ran. Three exceptions:
 
-- In [strict mode](#strict-mode-opt-in), these failures **fail the build** instead of skipping — a hard gate shouldn't silently disarm itself.
-- A `.swift-format` that isn't valid JSON at all is always a hard error: that's a problem with your config file, not a toolchain mismatch, and it fails loudly so you can fix it.
+- In [strict mode](#strict-mode-opt-in), these failures **fail the build** instead of skipping — a hard gate shouldn't silently disarm itself. That includes a configuration naming a rule the active `swift-format` doesn't know, which `--strict` treats as an error. The bundled fallback configuration enables two rules Swift 6.0's `swift-format` predates (`AvoidRetroactiveConformances` and `NoEmptyLinesOpeningClosingBraces`), so strict mode on Swift 6.0 needs your own `.swift-format`.
+- A `.swift-format` that isn't valid JSON at all (or isn't a JSON object) is always a hard error: that's a problem with your config file, not a toolchain mismatch, and it fails loudly, naming the file (and, on macOS, the line), so you can fix it.
+- Persnipe, the command plugin, always fails in these cases: you asked it to format, so it doesn't report success after formatting nothing.
 
-A `container:` image pins the toolchain by construction, which is the main reason the Linux recipe [above](#ci) uses one:
+A `container:` image pins the toolchain's major.minor version by construction, which is the main reason the Linux recipe [above](#ci) uses one. (`swift:6.2` follows 6.2 patch releases; name a full version such as `swift:6.2.4` to pin exactly.)
 
 ```yaml
 runs-on: ubuntu-latest
@@ -208,7 +218,7 @@ If you install the toolchain with `swift-actions/setup-swift` instead, the actio
 
 On **every platform**, an absolute, executable `$SWIFT_FORMAT` is honored first — if it points at a runnable binary it wins; if it's set but relative or not executable, the plugin warns and falls back to the platform default.
 
-Otherwise, on **macOS**, the plugins invoke `swift-format` via `/usr/bin/xcrun`, which resolves to the binary in your active Xcode toolchain.
+Otherwise, on **macOS**, the plugins invoke `swift-format` via `/usr/bin/xcrun`, pinned to the toolchain doing the build: the Xcode that `DEVELOPER_DIR` names, if set, otherwise the Xcode (or `swift` toolchain) running the build — not necessarily the `xcode-select` one — so the linter always matches the compiler.
 
 Otherwise, on **Linux**, the plugins auto-discover `swift-format` from the active Swift toolchain. Search order:
 
@@ -217,9 +227,9 @@ Otherwise, on **Linux**, the plugins auto-discover `swift-format` from the activ
 3. `/usr/local/bin/swift-format` and `/usr/bin/swift-format`.
 4. `swift-format` directly on `$PATH`.
 
-This means consumers don't need to symlink the binary into `/usr/local/bin` from CI — runners using the official Swift toolchain (e.g. `swift-actions/setup-swift`, the `swift:*` Docker images) work out of the box. If discovery fails, the plugin emits a clear error listing every path it checked instead of failing with a cryptic `env: 'swift-format': No such file or directory`.
+This means consumers don't need to symlink the binary into `/usr/local/bin` from CI — runners using the official Swift toolchain (e.g. `swift-actions/setup-swift`, the `swift:*` Docker images) work out of the box. If discovery fails, the plugin lists every path it checked — as a `linting skipped` warning from Persnoop (an error in strict mode), and as an error from Persnipe.
 
-Before linting, Persnoop runs a one-off **preflight probe** — it lints a trivial throwaway file to confirm the active toolchain can parse your config, so a config/toolchain mismatch surfaces as a skipped-lint warning (or, in strict mode, a build failure) rather than a cryptic prebuild error. The probe verdict is cached per config and toolchain in the plugin work directory, so unchanged incremental builds don't re-run it — only a `.ok` verdict is cached, so a broken config keeps re-probing until it's fixed.
+Before linting, Persnoop runs a one-off **preflight probe** — it lints a trivial throwaway file to confirm the active toolchain can parse your config, so a config/toolchain mismatch surfaces as a skipped-lint warning (or, in strict mode, a build failure) rather than a cryptic prebuild error. The probe verdict is cached in the plugin work directory, keyed on the config's contents, `DEVELOPER_DIR`, `TOOLCHAINS`, and the `swift-format` binary itself, so unchanged incremental builds don't re-run it and a toolchain switch or in-place update does. Only a passing verdict is cached, so a broken config keeps re-probing until it's fixed.
 
 The approach buys a few properties:
 
@@ -272,11 +282,12 @@ xcrun swift-format format --in-place --parallel --recursive --configuration .swi
 
 **Why the duplication exists.** SwiftPM plugin targets cannot share Swift source across targets and cannot carry resources (no `resources:` parameter on `.plugin(...)`, no `PluginContext` API to locate the plugin's own on-disk files), so both plugin source files must embed the fallback as a literal. The generator + CI drift check turns this structural duplication into a managed one: you only ever edit `.swift-format`, and CI fails if the embedded literals are out of sync.
 
-**CI.** `.github/workflows/lint.yml` runs on every pull request and push to `main`. It regenerates the embedded literals and verifies there's no diff (drift check), verifies the shared plugin infrastructure is byte-identical across both targets, then runs `swift-format lint` in strict mode on the plugin's own source.
+**CI.** `.github/workflows/lint.yml` runs on every pull request, on macOS and Linux and on the Swift 6.0 floor. Besides the drift and shared-code checks and a strict lint of the repo, it typechecks the Xcode plugin variants and exercises both plugins against the `Examples/CompileCheck` fixture. [CONTRIBUTING.md](CONTRIBUTING.md#ci-checks) lists every check.
 
 ## Links
 
 - [Persnicket repository](https://github.com/HeirloomLogic/Persnicket)
+- [Releases](https://github.com/HeirloomLogic/Persnicket/releases)
 - [Keeping dev-only plugins out of consumers' dependency graphs](DEV-TOOLING.md)
 - [`swift-format` repository](https://github.com/swiftlang/swift-format)
 - [`swift-format` rules reference](https://github.com/swiftlang/swift-format/blob/main/Documentation/RuleDocumentation.md)

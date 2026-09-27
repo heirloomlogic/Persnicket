@@ -1,4 +1,6 @@
 version: 2
+# Covers the pinned actions only. Dependabot can't update the workflow's
+# `container:` images (dependabot-core#5819), so those are bumped by hand.
 updates:
   - package-ecosystem: github-actions
     directory: /

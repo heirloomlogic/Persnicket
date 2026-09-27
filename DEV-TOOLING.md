@@ -88,9 +88,11 @@ In CI, create it before resolving the package, so the lint step sees the plugin:
 - name: Setup swift-format lint
   run: |
     touch .dev-tooling
-    swift package resolve
+    swift package resolve --force-resolved-versions
     .build/checkouts/Persnicket/bin/ci-lint-setup
 ```
+
+`--force-resolved-versions` makes the step fail, rather than silently resolve the newest matching tag, when `Package.resolved` doesn't pin Persnicket — so commit a `Package.resolved` generated with `.dev-tooling` present. Consumers of your package ignore it, so committing it costs them nothing.
 
 **Caveats:**
 

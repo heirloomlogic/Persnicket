@@ -30,6 +30,15 @@ body:
     validations:
       required: true
 
+  - type: input
+    id: persnicket-version
+    attributes:
+      label: Persnicket version
+      description: The release tag or commit your package depends on (see `Package.resolved`).
+      placeholder: "e.g., 2.2.0, or a commit SHA"
+    validations:
+      required: true
+
   - type: dropdown
     id: plugin
     attributes:
@@ -42,13 +51,37 @@ body:
       required: true
 
   - type: dropdown
+    id: invocation
+    attributes:
+      label: How was the plugin run?
+      options:
+        - Xcode build or xcodebuild
+        - swift build
+        - swift package plugin / format-source-code
+        - Xcode command plugin menu
+    validations:
+      required: true
+
+  - type: dropdown
+    id: strict-mode
+    attributes:
+      label: Was Persnoop strict mode on?
+      description: Turned on by `PERSNICKET_STRICT` (1, true, or yes) or a `.persnicket-strict` file in the project root.
+      options:
+        - "No"
+        - "Yes, via PERSNICKET_STRICT"
+        - "Yes, via .persnicket-strict"
+        - Not sure / not applicable
+    validations:
+      required: true
+
+  - type: dropdown
     id: platform
     attributes:
       label: Platform
       options:
         - macOS
         - Linux
-        - Windows
     validations:
       required: true
 

@@ -8,22 +8,7 @@ extension Persnipe: XcodeCommandPlugin {
         context: XcodePluginContext,
         arguments: [String]
     ) throws {
-        // Argument handling mirrors the SPM `Persnipe.performCommand` variant so the
-        // two behave identically. This block lives outside the byte-identical shared
-        // section, so keep it in sync with the SPM variant by hand.
-        var argumentExtractor = ArgumentExtractor(arguments)
-        let targetNames = argumentExtractor.extractOption(named: "target")
-        let unrecognized = argumentExtractor.remainingArguments
-        guard unrecognized.isEmpty else {
-            let message =
-                """
-                Unrecognized arguments: \(unrecognized.joined(separator: " ")). \
-                Persnipe accepts --target <name> (repeatable, space-separated — \
-                --target=<name> is not supported) to limit formatting to specific targets.
-                """
-            Diagnostics.error(message)
-            throw PluginError(message: message)
-        }
+        let targetNames = try requestedTargetNames(from: arguments)
 
         let requestedTargets: [XcodeTarget]
         if targetNames.isEmpty {
@@ -35,19 +20,14 @@ extension Persnipe: XcodeCommandPlugin {
             )
             requestedTargets = try targetNames.map { name in
                 guard let target = targetsByName[name] else {
-                    let message =
-                        "No target named \"\(name)\" in project \"\(context.xcodeProject.displayName)\"."
-                    Diagnostics.error(message)
-                    throw PluginError(message: message)
+                    throw failure("No target named \"\(name)\" in project \"\(context.xcodeProject.displayName)\".")
                 }
                 return target
             }
         }
 
-        let launcher = swiftFormatLauncher()
-
-        let configPath = try resolveConfiguration(
-            launcher: launcher,
+        pinDeveloperDirectory(toXcodeOf: try? context.tool(named: "swift-format").url)
+        let (launcher, configPath) = try prepareSwiftFormat(
             projectRoot: context.xcodeProject.directoryURL,
             pluginWorkDirectory: context.pluginWorkDirectoryURL
         )
@@ -77,71 +57,23 @@ extension Persnipe: XcodeCommandPlugin {
             return
         }
 
-        let process = Process()
-        process.executableURL = launcher.executable
-        process.arguments =
-            launcher.leadingArguments + [
-                "format",
-                "--in-place",
-                "--parallel",
-                "--configuration", configPath,
-            ] + swiftFilePaths
-
-        let stderrPipe = Pipe()
-        process.standardError = stderrPipe
-
-        try process.run()
-        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-
-        guard
-            process.terminationReason == .exit,
-            process.terminationStatus == EXIT_SUCCESS
-        else {
-            let stderr = String(data: stderrData, encoding: .utf8) ?? ""
-            let lower = stderr.lowercased()
-            let isConfigError =
-                lower.contains("unable to read configuration")
-                || lower.contains("invalid configuration")
-                || lower.contains("unknown argument")
-
-            if isConfigError {
-                Diagnostics.warning(
-                    """
-                    swift-format cannot parse the configuration — formatting skipped for \
-                    project "\(context.xcodeProject.displayName)".
-
-                    The active toolchain's swift-format is incompatible with the config schema. \
-                    This is a CI/toolchain setup issue, not a source code problem.
-
-                    --- swift-format stderr ---
-                    \(stderr.trimmingCharacters(in: .whitespacesAndNewlines))
-                    ---------------------------
-
-                    • config: \(configPath)
-                    • Fix: upgrade the toolchain to match the config schema, or pin \
-                    the config to an older schema compatible with the active toolchain.
-                    """
-                )
-                return
-            }
-
-            let message =
-                """
-                swift-format format failed for project \
-                "\(context.xcodeProject.displayName)" \
-                (status \(process.terminationStatus)).
-                --- swift-format stderr ---
-                \(stderr.isEmpty ? "(empty)" : stderr.trimmingCharacters(in: .whitespacesAndNewlines))
-                ---------------------------
-                """
-            Diagnostics.error(message)
-            throw PluginError(message: message)
+        // One invocation for the whole project: swift-format carries on past a file it
+        // can't parse, so a single bad file doesn't stop the rest from being formatted.
+        var reportedLines = Set<String>()
+        switch format(
+            filePaths: swiftFilePaths,
+            scope: "project \"\(context.xcodeProject.displayName)\"",
+            launcher: launcher,
+            configPath: configPath,
+            reportedLines: &reportedLines
+        ) {
+        case .formatted:
+            return
+        case .failed:
+            throw PluginError(message: "swift-format failed; see the error above.")
+        case .unusable:
+            throw PluginError(message: "Persnipe stopped; see the error above.")
         }
-
-        Diagnostics.remark(
-            "Formatted Swift source files in project \"\(context.xcodeProject.displayName)\"."
-        )
     }
 }
 #endif
