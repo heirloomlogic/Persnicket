@@ -2,22 +2,38 @@ name: Lint
 
 on:
   pull_request:
-  push:
-    branches: [main]
 
 permissions:
   contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # Unconditional because this workflow now only runs on `pull_request`. If a
+  # `push` or deploy trigger is ever added back, gate this on `github.event_name`
+  # again so a merge-time or deploy run is not cancelled by the next one.
+  cancel-in-progress: true
+
+# No dependency cache anywhere below, deliberately: every manifest in this repo
+# uses local path dependencies (Examples/CompileCheck -> path: "../.."), there is
+# no Package.resolved, and no step fetches anything over the network. There is
+# nothing to cache, so a cache step here would only add a key that never varies.
 
 jobs:
   swift-format-lint:
     name: swift-format (strict)
+    # The only job that needs macOS: it typechecks the Xcode plugin variants
+    # against Xcode's own PluginAPI, which ships inside Xcode.app and nowhere
+    # else. Everything else in this file runs on Linux.
     runs-on: macos-26
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing here pushes. This job runs the Persnoop build-tool plugin and
+          # the Persnipe command plugin, both of which exec an externally
+          # discovered swift-format, so the token has no business surviving into
+          # .git/config where they could read it.
+          persist-credentials: false
 
       - name: Log toolchain versions
         run: |
@@ -96,12 +112,33 @@ jobs:
   swift-format-lint-linux:
     name: swift-format (Linux, downstream-style)
     runs-on: ubuntu-latest
+    # The toolchain arrives as an image rather than via swift-actions/setup-swift:
+    # that action's latest stable (v2.4.0) still declares `using: node20`, which
+    # reached end of life on 2026-04-30, and its only newer tag (v3.0.0-beta.1) is
+    # a prerelease on the same runtime. It also removes this repo's last
+    # third-party action and pins the compiler exactly.
+    #
+    # This is NOT a speed change: measured on run 32320949022, `Initialize
+    # containers` costs 39s against the 37s the setup-swift step used to cost,
+    # so the job stays at about 60s. Do not re-swap it chasing wall-clock.
+    #
+    # swift-format ships in the Swift Linux toolchain from 6.0 onward, so the
+    # image needs no separate install. Use the full image, not -slim: the slim
+    # variants omit the compiler.
+    container: swift:6.2
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-
-      - uses: swift-actions/setup-swift@364295d9c23900ce04d4e5cc708387921b4e50f9 # v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          swift-version: "6.2"
+          # Nothing here pushes; see the macOS job above for why the plugins make
+          # a persisted token a live exposure rather than a theoretical one.
+          persist-credentials: false
+
+      # The container runs as root over a checkout git considers foreign. Without
+      # this, the `git checkout --` restores in the steps below fail on "dubious
+      # ownership".
+      - name: Trust the workspace
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Setup swift-format lint
         run: ./bin/ci-lint-setup
@@ -171,8 +208,12 @@ jobs:
     name: Swift 6.0 floor (Linux container)
     runs-on: ubuntu-latest
     container: swift:6.0
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing here pushes; see the macOS job above.
+          persist-credentials: false
 
       - name: Compile-check plugins via consumer fixture
         working-directory: Examples/CompileCheck

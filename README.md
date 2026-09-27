@@ -134,14 +134,25 @@ name: Lint
 
 on:
   pull_request:
-  push:
-    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   swift-format-lint:
     runs-on: macos-26
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # `swift package resolve` below runs third-party manifest and plugin
+          # code in this job. Nothing here pushes, so don't leave GITHUB_TOKEN in
+          # .git/config where that code can read it.
+          persist-credentials: false
 
       - name: Setup swift-format lint
         run: |
@@ -152,7 +163,11 @@ jobs:
         run: xcrun swift-format lint --strict --parallel --recursive --configuration .swift-format Sources Tests
 ```
 
-On Linux, install Swift with `swift-actions/setup-swift@v2` before the setup step, and drop the `xcrun` prefix from the lint command. The setup script itself is portable `sh` and runs unchanged.
+Three things in that skeleton are worth copying deliberately: the `actions/checkout` SHA pin with the version in a trailing comment (a floating `@v4` gives you neither reproducibility nor a supported Node runtime), the `timeout-minutes` (GitHub's default job timeout is **six hours**, and a macOS minute bills at 10x on a private repo), and the single `pull_request` trigger (adding `push: [main]` runs the same jobs twice on every merged commit, for the same commit the pull request already tested).
+
+On Linux, run the job in the official Swift image — `runs-on: ubuntu-latest` with `container: swift:6.2` — and drop the `xcrun` prefix from the lint command. `swift-format` ships inside the toolchain, so the image needs no separate install step. Use the full image rather than a `-slim` variant, which omits the compiler. The setup script itself is portable `sh` and runs unchanged.
+
+`swift-actions/setup-swift` also works and is what this repo used until 2026-08. Its latest stable release (`v2.4.0`) still declares `using: node20`, and Node 20 reached end of life on 2026-04-30; the only newer tag is a prerelease on the same runtime. The container avoids that, pins the compiler exactly, and removes a third-party action from the job. It is not faster: pulling the image costs about what installing the toolchain did.
 
 **Caveats:**
 
@@ -174,10 +189,17 @@ When the plugin detects that the active toolchain's `swift-format` cannot parse 
 - In [strict mode](#strict-mode-opt-in), these failures **fail the build** instead of skipping — a hard gate shouldn't silently disarm itself.
 - A `.swift-format` that isn't valid JSON at all is always a hard error: that's a problem with your config file, not a toolchain mismatch, and it fails loudly so you can fix it.
 
-When using `swift-actions/setup-swift@v2` on Linux, the action may install an older default Swift if `swift-version` is omitted. This can produce a `swift-format cannot parse the configuration — linting skipped` warning, although the build succeeds. Pin the version to match your project:
+A `container:` image pins the toolchain by construction, which is the main reason the Linux recipe [above](#ci) uses one:
 
 ```yaml
-- uses: swift-actions/setup-swift@v2
+runs-on: ubuntu-latest
+container: swift:6.2
+```
+
+If you install the toolchain with `swift-actions/setup-swift` instead, the action may install an older default Swift when `swift-version` is omitted. That produces a `swift-format cannot parse the configuration — linting skipped` warning while the build still succeeds, which is exactly the silent failure this section warns about. Pin the version explicitly, and pin the action by SHA:
+
+```yaml
+- uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a # v2.4.0
   with:
     swift-version: "6.2"
 ```
