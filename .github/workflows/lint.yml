@@ -320,6 +320,8 @@ jobs:
         run: ./bin/ci-verify-compile-check
 
       - name: Verify hierarchical configurations and skip transitions
+        env:
+          PERSNICKET_CI_SWIFT_6_0_FLOOR: "1"
         run: ./Examples/CompileCheck/verify-configuration.sh
 
       - name: Verify visible incremental lint and large source sets

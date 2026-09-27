@@ -158,8 +158,10 @@ build root-restored
 assert_linted
 assert_absent 'NeverForceUnwrap' root-restored.log
 # swift-format 602+ discovers configuration beside a symlink's destination.
-case "$("$real_formatter" --version)" in
-    600* | 601*) ;;
+# The Swift 6.0 CI image reports "main", so it also supplies its floor marker.
+echo "swift-format version: $("$real_formatter" --version)"
+case "${PERSNICKET_CI_SWIFT_6_0_FLOOR:-0}:$("$real_formatter" --version)" in
+    1:* | *:600* | *:601*) ;;
     *)
         mkdir Shared
         printf 'func linked() -> Int {\n      return Int("1")!\n}\n' > Shared/Linked.swift
