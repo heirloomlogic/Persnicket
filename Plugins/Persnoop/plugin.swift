@@ -33,7 +33,7 @@ struct Persnoop: BuildToolPlugin {
         )
     }
 
-    /// Builds the prebuild lint command for one target, shared by the SwiftPM and
+    /// Builds the incremental lint commands for one target, shared by the SwiftPM and
     /// Xcode entry points. Returns no commands — after a diagnostic — when linting
     /// can't run: toolchain and config trouble warns and skips, or fails the build in
     /// strict mode; an unusable config file is always an error.
@@ -90,30 +90,51 @@ struct Persnoop: BuildToolPlugin {
             fixedArguments: fixedArguments
         )
 
-        let outputsDir = pluginWorkDirectory.appendingPathComponent(
-            "outputs",
-            isDirectory: true
-        )
+        // SwiftPM retains generated sources from the previous build graph. Keep the
+        // output set stable when chunks disappear, until the build directory is cleaned.
+        let laneCountFile = pluginWorkDirectory.appendingPathComponent("lint-lane-count")
+        let previousLaneCount =
+            (try? String(contentsOf: laneCountFile, encoding: .utf8))
+            .flatMap(Int.init) ?? 0
+        let laneCount = max(chunks.count, previousLaneCount)
+        if laneCount != previousLaneCount {
+            try String(laneCount).write(to: laneCountFile, atomically: true, encoding: .utf8)
+        }
+
         let environment = toolchainSelectionEnvironment()
-        return try chunks.enumerated().map { index, chunk in
-            let outputFilesDirectory = outputsDir.appendingPathComponent(
-                "chunk-\(index + 1)",
-                isDirectory: true
-            )
-            try FileManager.default.createDirectory(
-                at: outputFilesDirectory,
-                withIntermediateDirectories: true
-            )
+        return (0..<laneCount).map { index in
+            let stamp = pluginWorkDirectory.appendingPathComponent("lint-stamp-\(index + 1).swift")
+            guard chunks.indices.contains(index) else {
+                return .buildCommand(
+                    displayName: "Preserve swift-format lint output (\(targetName), lane \(index + 1))",
+                    executable: URL(fileURLWithPath: "/bin/sh"),
+                    arguments: [
+                        "-c",
+                        "printf '%s\\n' '// Persnoop inactive lint stamp.' > \"$1\"",
+                        "persnoop-stamp",
+                        stamp.path,
+                    ],
+                    outputFiles: [stamp]
+                )
+            }
+
             let displayName =
                 chunks.count == 1
                 ? "swift-format lint (\(targetName))"
                 : "swift-format lint (\(targetName), chunk \(index + 1) of \(chunks.count))"
-            return .prebuildCommand(
+            return .buildCommand(
                 displayName: displayName,
-                executable: launcher.executable,
-                arguments: fixedArguments + chunk,
+                executable: URL(fileURLWithPath: "/bin/sh"),
+                arguments: [
+                    "-c",
+                    "set -eu; stamp=$1; shift; rm -f \"$stamp\"; \"$@\"; printf '%s\\n' '// Persnoop lint stamp.' > \"$stamp\"",
+                    "persnoop-lint",
+                    stamp.path,
+                    launcher.executable.path,
+                ] + fixedArguments + chunks[index],
                 environment: environment,
-                outputFilesDirectory: outputFilesDirectory
+                inputFiles: chunks[index].map { URL(fileURLWithPath: $0) } + [URL(fileURLWithPath: configPath)],
+                outputFiles: [stamp]
             )
         }
     }
@@ -312,8 +333,8 @@ struct Persnoop: BuildToolPlugin {
         ["--parallel", "--follow-symlinks"]
     }
 
-    /// The toolchain-selection variables the build-tool plugin forwards to its prebuild
-    /// command. SwiftPM runs prebuild commands with a scrubbed environment, so without
+    /// The toolchain-selection variables the build-tool plugin forwards to its build
+    /// command. SwiftPM runs build commands with a scrubbed environment, so without
     /// them `xcrun` in the lint would resolve the xcode-select toolchain even when the
     /// plugin — and its preflight probe — ran under a different `DEVELOPER_DIR`.
     func toolchainSelectionEnvironment() -> [String: String] {
@@ -336,7 +357,7 @@ struct Persnoop: BuildToolPlugin {
     /// already selects a toolchain. Xcode runs plugins without `DEVELOPER_DIR`, so
     /// `xcrun` would otherwise resolve the xcode-select Xcode even when a different
     /// Xcode is running the build, and lint with the wrong swift-format. Everything
-    /// downstream — the probe, its cache key, the forwarded prebuild environment —
+    /// downstream — the probe, its cache key, the forwarded build environment —
     /// reads the variable, so setting it once keeps them all on the building Xcode.
     func pinDeveloperDirectory(toXcodeOf swiftFormat: URL?) {
         #if os(macOS)
@@ -534,7 +555,7 @@ struct Persnoop: BuildToolPlugin {
     /// `strict` must match the real lint: under `--strict`, a config warning such as an
     /// unrecognized rule fails the run, where otherwise it passes.
     ///
-    /// This catches config/toolchain mismatches before SPM's prebuild command runs —
+    /// This catches config/toolchain mismatches before SPM's build command runs —
     /// where a non-zero exit would fail the build. The verdict is cached in the
     /// persistent per-target work directory, keyed on the config bytes and the resolved
     /// toolchain; on a cache hit the probe subprocess is skipped entirely. Only `.ok`
@@ -589,7 +610,7 @@ struct Persnoop: BuildToolPlugin {
         do {
             try process.run()
         } catch {
-            // The prebuild command would fail to launch the same way.
+            // The build command would fail to launch the same way.
             return .missingExecutable(stderr: error.localizedDescription)
         }
         let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()

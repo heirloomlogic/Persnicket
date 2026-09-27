@@ -15,7 +15,7 @@ A lightweight SPM plugin that lints and formats Swift source files. Its only dep
 
 | Plugin | Type | What it does |
 |---|---|---|
-| **Persnoop** | Build Tool | Runs `swift-format lint` automatically on every build as a pre-build step. Violations appear as build warnings in Xcode, or fail the build in opt-in strict mode. |
+| **Persnoop** | Build Tool | Runs `swift-format lint` when a target's Swift sources or project-root configuration change. Violations appear as build warnings in Xcode and `swift build`, or fail the build in opt-in strict mode. |
 | **Persnipe** | Command | Runs `swift-format format --in-place` on demand to reformat source files. |
 
 Both plugins work with Swift Package Manager. On macOS, Xcode project integration is also supported.
@@ -44,7 +44,7 @@ Or in Xcode: **File → Add Package Dependencies** and enter the repository URL.
 
 ### Build Tool Plugin (automatic linting)
 
-Apply the plugin to any target you want linted on every build:
+Apply the plugin to any target you want linted when its Swift sources or project-root configuration change:
 
 ```swift
 .target(
@@ -55,9 +55,9 @@ Apply the plugin to any target you want linted on every build:
 )
 ```
 
-In Xcode, lint violations are reported as **build warnings**, shown inline, and they do not fail the build. (`swift-format lint` only exits non-zero in `--strict` mode, and a failing pre-build step would block compilation entirely.)
+In Xcode and `swift build`, lint violations are reported as build warnings when lint runs, and they do not fail the build. Like incremental compiler warnings, they are not replayed on later no-op builds.
 
-**`swift build` does not show them.** SwiftPM discards a pre-build step's output when the step succeeds, so with `swift build` — and so on Linux, where there is no Xcode — a non-strict lint runs on every build and reports nothing. From the command line, see violations by opting into strict mode, where they fail the build as errors, or by running `swift-format lint` directly (see [CI](#ci) below).
+Persnoop declares the source files and resolved configuration as command inputs. After each successful lint chunk, it writes a generated `.swift` file containing one comment; SwiftPM uses that stamp to skip unchanged lint work. These stamps add no declarations or executable code, but they are generated sources in the target's build graph. If the source set shrinks, unused stamps remain until the build directory is cleaned so SwiftPM can keep its generated-source list valid.
 
 If you want violations to *fail* a build, either run `swift-format lint --strict` directly in CI or opt into the plugin's strict mode:
 
@@ -68,14 +68,14 @@ To make Persnoop *fail* the build on a violation, opt in with either:
 - the **`PERSNICKET_STRICT`** environment variable set to `1`, `true`, or `yes` — convenient for CI and `swift build`. It must be in the environment (`PERSNICKET_STRICT=1 xcodebuild …`); an `xcodebuild` build setting (`xcodebuild … PERSNICKET_STRICT=1`) doesn't reach the plugin; or
 - a **`.persnicket-strict`** file in your project root (`touch .persnicket-strict`). Unlike the environment variable, this is visible to **Xcode GUI builds**, which don't inherit your shell environment.
 
-When either is present, Persnoop passes `--strict` to `swift-format lint`, so violations exit non-zero. Because this is a pre-build step, a violation **halts the build before compilation** — so it's best kept CI-only, or committed as `.persnicket-strict` only when your whole team wants hard local enforcement. Strict mode is off by default.
+When either is present, Persnoop passes `--strict` to `swift-format lint`, so violations exit non-zero. A violation halts the build before compilation and writes no stamp, so unchanged strict builds rerun and fail until the violation is fixed. Strict mode is best kept CI-only, or committed as `.persnicket-strict` only when your whole team wants hard local enforcement. It is off by default.
 
 Strict mode also hardens the failure path: when `swift-format` can't parse the configuration or is missing from the toolchain, Persnoop normally warns and skips linting (see [Toolchain Compatibility](#toolchain-compatibility)) — but in strict mode it **fails the build** instead, so a broken setup can't silently disable the gate you opted into.
 
 A few sharp edges:
 
 - **Precedence**: the `.persnicket-strict` sentinel wins — when it's present, `PERSNICKET_STRICT=0` cannot turn strict mode off. Unrecognized `PERSNICKET_STRICT` values are treated as off, with a warning.
-- **Toggling**: takes effect on the next `swift build`. Xcode caches plugin build planning, so a toggle may not register until the next re-plan — if a rebuild doesn't pick it up, clean the build folder (Product → Clean Build Folder) and build again.
+- **Toggling**: changes the lint command and takes effect on the next `swift build`, even when sources and configuration are unchanged. Xcode caches plugin build planning, so a toggle may not register until the next re-plan — if a rebuild doesn't pick it up, clean the build folder (Product → Clean Build Folder) and build again.
 
 If your package is itself consumed as a dependency, applying Persnoop pulls Persnicket into your consumers' dependency graph too. See [DEV-TOOLING.md](DEV-TOOLING.md) to gate it out so only your own builds run the linter.
 
@@ -229,7 +229,7 @@ Otherwise, on **Linux**, the plugins auto-discover `swift-format` from the activ
 
 This means consumers don't need to symlink the binary into `/usr/local/bin` from CI — runners using the official Swift toolchain (e.g. `swift-actions/setup-swift`, the `swift:*` Docker images) work out of the box. If discovery fails, the plugin lists every path it checked — as a `linting skipped` warning from Persnoop (an error in strict mode), and as an error from Persnipe.
 
-Before linting, Persnoop runs a one-off **preflight probe** — it lints a trivial throwaway file to confirm the active toolchain can parse your config, so a config/toolchain mismatch surfaces as a skipped-lint warning (or, in strict mode, a build failure) rather than a cryptic prebuild error. The probe verdict is cached in the plugin work directory, keyed on the config's contents, `DEVELOPER_DIR`, `TOOLCHAINS`, and the `swift-format` binary itself, so unchanged incremental builds don't re-run it and a toolchain switch or in-place update does. Only a passing verdict is cached, so a broken config keeps re-probing until it's fixed.
+Before linting, Persnoop runs a one-off **preflight probe** — it lints a trivial throwaway file to confirm the active toolchain can parse your config, so a config/toolchain mismatch surfaces as a skipped-lint warning (or, in strict mode, a build failure) rather than a cryptic build-command error. The probe verdict is cached in the plugin work directory, keyed on the config's contents, `DEVELOPER_DIR`, `TOOLCHAINS`, and the `swift-format` binary itself, so unchanged incremental builds don't re-run it and a toolchain switch or in-place update does. Only a passing verdict is cached, so a broken config keeps re-probing until it's fixed.
 
 The approach buys a few properties:
 

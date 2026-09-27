@@ -72,7 +72,7 @@ jobs:
           swift build
           swift package plugin --allow-writing-to-package-directory format-source-code
 
-      - name: Verify plugins chunk large source sets
+      - name: Verify visible incremental lint and large source sets
         working-directory: Examples/CompileCheck
         run: ./verify-large-target.sh
 
@@ -241,7 +241,7 @@ jobs:
           swift build
           swift package plugin --allow-writing-to-package-directory format-source-code
 
-      - name: Verify plugins chunk large source sets
+      - name: Verify visible incremental lint and large source sets
         working-directory: Examples/CompileCheck
         run: ./verify-large-target.sh
 
@@ -393,6 +393,10 @@ jobs:
         run: |
           swift build
           swift package plugin --allow-writing-to-package-directory format-source-code
+
+      - name: Verify visible incremental lint and large source sets
+        working-directory: Examples/CompileCheck
+        run: ./verify-large-target.sh
 
       # See the matching step in the macOS job. swift-format's wording for a rejected
       # config has changed across versions, and Persnipe classifies by that wording.
