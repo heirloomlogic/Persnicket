@@ -1,29 +1,8 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+See [GitHub Releases](https://github.com/HeirloomLogic/Persnicket/releases) for release notes after 2.2.0. GitHub Releases is the canonical changelog; publishing a release does not require updating this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [Unreleased]
-
-### Added
-
-- CI now covers symlinked source files, JSON5 configuration files, unusable configurations, Persnipe failures, target argument validation, and the advertised Swift 6.0 floor.
-- `ci-lint-setup` now installs separate problem matchers for file diagnostics and configuration diagnostics.
-
-### Changed
-
-- Persnipe accepts `--target <name>` and `--target=<name>`, rejects missing values, removes duplicate target names, and continues with later targets after one target fails before returning a failure.
-- On macOS, the plugins select `swift-format` from the toolchain running the build. Probe-cache keys now include toolchain environment variables and the resolved executable, so toolchain changes invalidate prior results.
-- CI runs only for pull request events, applies job timeouts, avoids persisting checkout credentials, and runs Linux checks in versioned Swift containers. The published workflow guidance matches these safeguards.
-- Development-tooling guidance now tells package authors to commit `Package.resolved` and use `swift package resolve --force-resolved-versions` before running scripts from a dependency checkout.
-
-### Fixed
-
-- Configuration validation now accepts the JSON5 syntax supported by `swift-format` in Swift 6.2 and later while still rejecting malformed or non-object configuration files.
-- The plugins pass `--follow-symlinks`, allowing Swift 6.2 and later to lint and format source files reached through symlinks.
-- Persnipe no longer reports success when `swift-format` rejects a configuration or fails for a target.
-- GitHub Actions annotations now distinguish configuration diagnostics from source-file diagnostics.
+This file preserves the historical changelog through 2.2.0 as an archive.
 
 ## [2.2.0] - 2026-07-03
 
@@ -184,7 +163,6 @@ Consumers must update `Package.swift`:
 - Xcode project integration for both plugins (macOS).
 - Embedded fallback configuration for projects without a `.swift-format` file.
 
-[Unreleased]: https://github.com/HeirloomLogic/Persnicket/compare/2.2.0...HEAD
 [2.2.0]: https://github.com/HeirloomLogic/Persnicket/compare/2.1.0...2.2.0
 [2.1.0]: https://github.com/HeirloomLogic/Persnicket/compare/2.0.2...2.1.0
 [2.0.2]: https://github.com/HeirloomLogic/Persnicket/compare/2.0.1...2.0.2

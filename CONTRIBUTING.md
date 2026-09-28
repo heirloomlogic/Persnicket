@@ -59,6 +59,10 @@ The GitHub Actions workflow (`.github/workflows/lint.yml`) runs on every pull re
 
 All checks must pass before merge.
 
+## Release notes
+
+Publish release notes in [GitHub Releases](https://github.com/HeirloomLogic/Persnicket/releases). `CHANGELOG.md` is a historical archive through 2.2.0 and does not need an entry or version update for new releases. Review the changes since the previous tag when preparing each release.
+
 ## Reporting issues
 
 Use the [issue templates](https://github.com/HeirloomLogic/Persnicket/issues/new/choose) to report bugs or request features.
