@@ -1,0 +1,23 @@
+#!/usr/bin/env sh
+# Verifies that Persnipe formats only the requested target.
+set -eu
+cd "$(dirname "$0")/../Examples/CompileCheck"
+
+SOURCE="Sources/CompileCheck/main.swift"
+trap 'git checkout -- "$SOURCE"' EXIT
+
+printf 'print( "hello, world" )\n' > "$SOURCE"
+swift package plugin --allow-writing-to-package-directory format-source-code --target CompileCheck
+
+if grep -q 'print( "hello, world" )' "$SOURCE"; then
+    echo "::error::Persnipe did not reformat a deliberately misformatted file"
+    exit 1
+fi
+
+if ! grep -q 'print("hello, world")' "$SOURCE"; then
+    cat "$SOURCE"
+    echo "::error::Persnipe changed the file, but not to the expected formatting"
+    exit 1
+fi
+
+echo "ok: Persnipe reformatted the file via --target"

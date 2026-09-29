@@ -1,0 +1,45 @@
+#!/usr/bin/env sh
+# Verifies that Persnoop strict mode fails the build on a lint violation.
+set -eu
+cd "$(dirname "$0")/../Examples/CompileCheck"
+
+SOURCE="Sources/CompileCheck/main.swift"
+case "${PERSNICKET_CI_SWIFT_6_0_FLOOR:-0}" in
+    0) FLOOR_CONFIG=false ;;
+    1) FLOOR_CONFIG=true ;;
+    *)
+        echo "error: PERSNICKET_CI_SWIFT_6_0_FLOOR must be 0 or 1" >&2
+        exit 1
+        ;;
+esac
+
+cleanup() {
+    if [ "$FLOOR_CONFIG" = true ]; then
+        rm -f .swift-format
+    fi
+    rm -f build.log
+    git checkout -- "$SOURCE"
+}
+trap cleanup EXIT
+
+# The Swift 6.0 floor's swift-format predates rules in the package configuration.
+# Use the same reduced configuration that the floor job used before this check was shared.
+if [ "$FLOOR_CONFIG" = true ]; then
+    printf '{"version": 1, "rules": {"NeverForceUnwrap": true}}\n' > .swift-format
+fi
+
+printf 'print("hello, world")\nlet value = Int("1")!\nprint(value)\n' > "$SOURCE"
+rm -rf .build
+if PERSNICKET_STRICT=1 swift build > build.log 2>&1; then
+    cat build.log
+    echo "::error::strict mode did not fail the build on a lint violation"
+    exit 1
+fi
+
+cat build.log
+if ! grep -q 'NeverForceUnwrap' build.log; then
+    echo "::error::build failed for a reason other than the expected NeverForceUnwrap violation"
+    exit 1
+fi
+
+echo "ok: strict mode failed the build as expected"
