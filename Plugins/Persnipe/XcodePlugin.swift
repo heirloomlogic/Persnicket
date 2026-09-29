@@ -58,8 +58,9 @@ extension Persnipe: XcodeCommandPlugin {
             pluginWorkDirectory: context.pluginWorkDirectoryURL
         )
 
-        // One invocation for the whole project: swift-format carries on past a file it
-        // can't parse, so a single bad file doesn't stop the rest from being formatted.
+        // One batch for the whole project, chunked only to stay under argument limits:
+        // swift-format carries on past a file it can't parse, so a single bad file doesn't
+        // stop the rest from being formatted.
         var reportedLines = Set<String>()
         switch format(
             filePaths: swiftFilePaths,

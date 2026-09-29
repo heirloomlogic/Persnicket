@@ -351,7 +351,7 @@ jobs:
       # The bundled fallback config enables rules swift-format 600 predates, which
       # `--strict` turns into a failure before any file is linted. The strict-mode probe
       # must report that as a config/toolchain mismatch naming the rule, not let the
-      # prebuild step fail with SwiftPM's raw command dump.
+      # lint build command fail with SwiftPM's raw command dump.
       - name: Verify strict mode names rules the floor's swift-format lacks
         working-directory: Examples/CompileCheck
         run: |

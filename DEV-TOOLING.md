@@ -1,6 +1,6 @@
 # Keeping dev-only plugins out of your consumers' dependency graph
 
-Persnoop is dev-only tooling — it lints *your* source on every build. But applying it adds **Persnicket** to your `Package.swift` `dependencies:` and attaches a build-tool plugin to your targets. If your package is itself consumed as a dependency, that leaks downstream: every consumer must resolve, fetch, and trust Persnicket just to build your target, even though the linter is irrelevant to them. The same applies to any dev-only build-tool plugin you attach to a target — for example [SwiftLintPlugins](https://github.com/SimplyDanny/SwiftLintPlugins).
+Persnoop is dev-only tooling — it lints *your* source as you build. But applying it adds **Persnicket** to your `Package.swift` `dependencies:` and attaches a build-tool plugin to your targets. If your package is itself consumed as a dependency, that leaks downstream: every consumer must resolve, fetch, and trust Persnicket just to build your target, even though the linter is irrelevant to them. The same applies to any dev-only build-tool plugin you attach to a target — for example [SwiftLintPlugins](https://github.com/SimplyDanny/SwiftLintPlugins).
 
 SwiftPM has no first-class concept of a dev-only dependency, so there is no built-in flag for this. This guide gates the tooling on a gitignored **`.dev-tooling`** sentinel file: a filesystem feature-flag present only in your own working clone and in CI. When it is absent — as it always is for consumers — the dependency and plugin drop out of the manifest entirely.
 

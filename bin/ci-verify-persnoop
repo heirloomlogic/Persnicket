@@ -23,7 +23,7 @@ cleanup() {
 trap cleanup EXIT
 
 # The Swift 6.0 floor's swift-format predates rules in the package configuration.
-# Use the same reduced configuration that the floor job used before this check was shared.
+# Use a reduced configuration containing only the rule this check violates.
 if [ "$FLOOR_CONFIG" = true ]; then
     printf '{"version": 1, "rules": {"NeverForceUnwrap": true}}\n' > .swift-format
 fi

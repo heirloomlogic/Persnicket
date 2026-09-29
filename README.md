@@ -219,7 +219,7 @@ runs-on: ubuntu-latest
 container: swift:6.2
 ```
 
-If you install the toolchain with `swift-actions/setup-swift` instead, the action may install an older default Swift when `swift-version` is omitted. That produces a `swift-format cannot parse the configuration — linting skipped` warning while the build still succeeds, which is exactly the silent failure this section warns about. Pin the version explicitly, and pin the action by SHA:
+If you install the toolchain with `swift-actions/setup-swift` instead, the action may install an older default Swift when `swift-version` is omitted. That produces a `swift-format cannot use the configuration` warning ending in `linting skipped` while the build still succeeds, which is exactly the silent failure this section warns about. Pin the version explicitly, and pin the action by SHA:
 
 ```yaml
 - uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a # v2.4.0
@@ -231,7 +231,7 @@ If you install the toolchain with `swift-actions/setup-swift` instead, the actio
 
 On **every platform**, an absolute, executable `$SWIFT_FORMAT` is honored first — if it points at a runnable binary it wins; if it's set but relative or not executable, the plugin warns and falls back to the platform default.
 
-Otherwise, on **macOS**, the plugins invoke `swift-format` via `/usr/bin/xcrun`, pinned to the toolchain doing the build: the Xcode that `DEVELOPER_DIR` names, if set, otherwise the Xcode (or `swift` toolchain) running the build — not necessarily the `xcode-select` one — so the linter always matches the compiler.
+Otherwise, on **macOS**, the plugins invoke `swift-format` via `/usr/bin/xcrun`, pinned to the toolchain doing the build: the Xcode that `DEVELOPER_DIR` names, or the toolchain `TOOLCHAINS` selects, if either is set; otherwise the Xcode running the build — not necessarily the `xcode-select` one — so the linter matches the compiler. A standalone swift.org toolchain is matched only when selected through `DEVELOPER_DIR` or `TOOLCHAINS`; without them, `xcrun` uses its default Xcode.
 
 Otherwise, on **Linux**, the plugins auto-discover `swift-format` from the active Swift toolchain. Search order:
 
