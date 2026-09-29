@@ -35,7 +35,10 @@ cleanup() {
         rm -rf "$scratch_dir"
     fi
 }
-trap cleanup EXIT HUP INT TERM
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 cp "$source_file" "$scratch_dir/ArgumentLimitCheck.swift"
 if [ -f "$config_file" ]; then
@@ -316,6 +319,11 @@ fi
 if ! grep -q 'intentional Persnipe chunk failure' "$scratch_dir/persnipe-failure.log"; then
     cat "$scratch_dir/persnipe-failure.log"
     echo "error: Persnipe failed for an unexpected reason" >&2
+    exit 1
+fi
+if ! grep -Eq 'batch [0-9]+ of [0-9]+' "$scratch_dir/persnipe-failure.log"; then
+    cat "$scratch_dir/persnipe-failure.log"
+    echo "error: Persnipe did not identify the failed formatting batch" >&2
     exit 1
 fi
 verify_capture Persnipe-mixed-result
