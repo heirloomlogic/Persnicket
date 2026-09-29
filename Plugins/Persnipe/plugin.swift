@@ -455,8 +455,8 @@ struct Persnipe: CommandPlugin {
         ["--parallel", "--follow-symlinks"]
     }
 
-    /// The toolchain-selection variables the build-tool plugin forwards to its prebuild
-    /// command. SwiftPM runs prebuild commands with a scrubbed environment, so without
+    /// The toolchain-selection variables the build-tool plugin forwards to its build
+    /// command. SwiftPM runs build commands with a scrubbed environment, so without
     /// them `xcrun` in the lint would resolve the xcode-select toolchain even when the
     /// plugin — and its preflight probe — ran under a different `DEVELOPER_DIR`.
     func toolchainSelectionEnvironment() -> [String: String] {
@@ -479,7 +479,7 @@ struct Persnipe: CommandPlugin {
     /// already selects a toolchain. Xcode runs plugins without `DEVELOPER_DIR`, so
     /// `xcrun` would otherwise resolve the xcode-select Xcode even when a different
     /// Xcode is running the build, and lint with the wrong swift-format. Everything
-    /// downstream — the probe, its cache key, the forwarded prebuild environment —
+    /// downstream — the probe, its cache key, the forwarded build environment —
     /// reads the variable, so setting it once keeps them all on the building Xcode.
     func pinDeveloperDirectory(toXcodeOf swiftFormat: URL?) {
         #if os(macOS)
@@ -677,7 +677,7 @@ struct Persnipe: CommandPlugin {
     /// `strict` must match the real lint: under `--strict`, a config warning such as an
     /// unrecognized rule fails the run, where otherwise it passes.
     ///
-    /// This catches config/toolchain mismatches before SPM's prebuild command runs —
+    /// This catches config/toolchain mismatches before SPM's build command runs —
     /// where a non-zero exit would fail the build. The verdict is cached in the
     /// persistent per-target work directory, keyed on the config bytes and the resolved
     /// toolchain; on a cache hit the probe subprocess is skipped entirely. Only `.ok`
@@ -732,7 +732,7 @@ struct Persnipe: CommandPlugin {
         do {
             try process.run()
         } catch {
-            // The prebuild command would fail to launch the same way.
+            // The build command would fail to launch the same way.
             return .missingExecutable(stderr: error.localizedDescription)
         }
         let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
