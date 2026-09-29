@@ -94,6 +94,11 @@ struct Persnoop: BuildToolPlugin {
             )
         }
 
+        if ProcessInfo.processInfo.environment["PERSNICKET_SKIP"] == "1" {
+            Diagnostics.warning("Persnoop linting skipped for target \"\(targetName)\" because PERSNICKET_SKIP=1.")
+            return planningCommands + inactiveCommands
+        }
+
         let strict = strictModeEnabled(projectRoot: projectRoot)
 
         guard let launcher = swiftFormatLauncher() else {
@@ -109,30 +114,31 @@ struct Persnoop: BuildToolPlugin {
         }
 
         guard
-            let configPath = try resolveConfiguration(
+            let configuration = try resolveConfiguration(
                 launcher: launcher,
                 projectRoot: projectRoot,
+                sourceFiles: sourceFiles,
                 pluginWorkDirectory: pluginWorkDirectory
             )
         else {
             return planningCommands + inactiveCommands
         }
 
-        let probe = probeSwiftFormat(
-            launcher: launcher,
-            configPath: configPath,
-            strict: strict,
-            pluginWorkDirectory: pluginWorkDirectory
-        )
-        guard case .ok = probe else {
-            emitProbeFailure(probe, launcher: launcher, configPath: configPath, strict: strict)
-            return planningCommands + inactiveCommands
+        for configPath in configuration.paths {
+            let probe = probeSwiftFormat(
+                launcher: launcher,
+                configPath: configPath,
+                strict: strict,
+                pluginWorkDirectory: pluginWorkDirectory
+            )
+            guard case .ok = probe else {
+                emitProbeFailure(probe, launcher: launcher, configPath: configPath, strict: strict)
+                return planningCommands + inactiveCommands
+            }
         }
 
         var fixedArguments =
-            launcher.leadingArguments + ["lint"] + commonSwiftFormatOptions + [
-                "--configuration", configPath,
-            ]
+            launcher.leadingArguments + ["lint"] + commonSwiftFormatOptions + configuration.arguments
         if strict {
             fixedArguments.append("--strict")
         }
@@ -148,7 +154,9 @@ struct Persnoop: BuildToolPlugin {
 
         let environment = toolchainSelectionEnvironment()
         // Reuse the probe identity so a formatter replaced at the same path reruns lint.
-        let fingerprint = preflightCacheKey(configPath: configPath, launcher: launcher) ?? UUID().uuidString
+        let fingerprint = configuration.paths.map { path in
+            path + ":" + (preflightCacheKey(configPath: path, launcher: launcher) ?? UUID().uuidString)
+        }.joined(separator: "|")
         return planningCommands
             + (0..<laneCount).map { index in
                 let stamp = pluginWorkDirectory.appendingPathComponent("lint-stamp-\(index + 1).swift")
@@ -166,13 +174,13 @@ struct Persnoop: BuildToolPlugin {
                     arguments: [
                         "-c",
                         "set -eu; stamp=$1; shift; rm -f \"$stamp\"; \"$@\"; printf '%s\\n' '// Persnoop lint stamp.' > \"$stamp\"",
-                        "persnoop-lint-\(fingerprint)",
+                        "persnoop-lint-\(stableHash(Data(fingerprint.utf8)))",
                         stamp.path,
                         launcher.executable.path,
                     ] + fixedArguments + chunks[index],
                     environment: environment,
-                    inputFiles: chunks[index].map { URL(fileURLWithPath: $0) } + [
-                        URL(fileURLWithPath: configPath), planningStamp,
+                    inputFiles: (chunks[index] + configuration.paths).map { URL(fileURLWithPath: $0) } + [
+                        planningStamp
                     ],
                     outputFiles: [stamp]
                 )
@@ -420,25 +428,42 @@ struct Persnoop: BuildToolPlugin {
 
     // MARK: Configuration Resolution
 
-    /// Looks for `.swift-format` in the downstream project root, falling back to an
-    /// embedded default written to the plugin work directory.
-    ///
-    /// Returns nil — after emitting an error — when the configuration is unusable
-    /// (unreadable, a directory, or not a JSON object). Callers must stop: every
-    /// swift-format invocation would fail on it, and follow-up diagnostics would only
-    /// misattribute the problem to the toolchain.
+    /// The configurations to validate and the formatter's explicit fallback arguments.
+    struct ConfigurationSelection {
+        let paths: [String]
+        let arguments: [String]
+    }
+
+    /// Resolves configuration arguments and dependencies. Reports an error and returns
+    /// nil when any selected config is unreadable, a directory, or not a JSON object.
     func resolveConfiguration(
         launcher: SwiftFormatLauncher,
         projectRoot: URL,
+        sourceFiles: [URL],
         pluginWorkDirectory: URL
-    ) throws -> String? {
-        let resolvedPath: String
-        let projectConfig = projectRoot.appendingPathComponent(".swift-format")
+    ) throws -> ConfigurationSelection? {
+        let projectConfig = projectRoot.appendingPathComponent(".swift-format").standardizedFileURL
+        let selection: ConfigurationSelection
         if FileManager.default.fileExists(atPath: projectConfig.path) {
-            Diagnostics.remark(
-                "Using project configuration at \(projectConfig.path)."
-            )
-            resolvedPath = projectConfig.path
+            // Let swift-format choose the nearest ancestor config for each source.
+            // Mirror that search only to validate and track its build dependencies.
+            var paths: Set<String> = [projectConfig.path]
+            var searchedDirectories = Set<String>()
+            for source in sourceFiles {
+                var directory = source.resolvingSymlinksInPath().deletingLastPathComponent().standardizedFileURL
+                while searchedDirectories.insert(directory.path).inserted {
+                    let candidate = directory.appendingPathComponent(".swift-format")
+                    if FileManager.default.fileExists(atPath: candidate.path) {
+                        paths.insert(candidate.path)
+                        break
+                    }
+                    let parent = directory.deletingLastPathComponent()
+                    if parent.path == directory.path { break }
+                    directory = parent
+                }
+            }
+            selection = ConfigurationSelection(paths: paths.sorted(), arguments: [])
+            Diagnostics.remark("Using per-file .swift-format discovery with project config at \(projectConfig.path).")
         } else {
             let fallbackURL = pluginWorkDirectory.appendingPathComponent("swift-format-fallback.json")
             // Rewrite only on change, so the file's mtime stays stable across builds.
@@ -454,31 +479,32 @@ struct Persnoop: BuildToolPlugin {
                 https://github.com/swiftlang/swift-format/blob/main/Documentation/RuleDocumentation.md
                 """
             )
-            resolvedPath = fallbackURL.path
+            selection = ConfigurationSelection(
+                paths: [fallbackURL.path], arguments: ["--configuration", fallbackURL.path])
         }
 
-        switch validateConfig(at: resolvedPath) {
-        case .ok(let version):
-            Diagnostics.remark(
-                """
-                swift-format plugin preflight:
-                • config: \(resolvedPath)
-                • version: \(version.map(String.init) ?? "unknown")
-                • executable: \(launcher.displayCommand)
-                """
-            )
-            return resolvedPath
-        case .invalid(let reason):
-            // swift-format's own report of this is "Unable to read configuration",
-            // without naming the file — so name it here.
-            Diagnostics.error(
-                """
-                The swift-format configuration at \(resolvedPath) is unusable: \(reason)
-                Fix the file and try again.
-                """
-            )
-            return nil
+        for path in selection.paths {
+            switch validateConfig(at: path) {
+            case .ok(let version):
+                Diagnostics.remark(
+                    """
+                    swift-format plugin preflight:
+                    • config: \(path)
+                    • version: \(version.map(String.init) ?? "unknown")
+                    • executable: \(launcher.displayCommand)
+                    """
+                )
+            case .invalid(let reason):
+                Diagnostics.error(
+                    """
+                    The swift-format configuration at \(path) is unusable: \(reason)
+                    Fix the file and try again.
+                    """
+                )
+                return nil
+            }
         }
+        return selection
     }
 
     /// Best-effort probe of the active swift-format's `--version` output.
@@ -607,7 +633,8 @@ struct Persnoop: BuildToolPlugin {
         strict: Bool,
         pluginWorkDirectory: URL
     ) -> ProbeResult {
-        let cacheURL = pluginWorkDirectory.appendingPathComponent("preflight-cache.v2")
+        let cacheURL = pluginWorkDirectory.appendingPathComponent(
+            "preflight-cache-\(stableHash(Data(configPath.utf8))).v2")
         let cacheKey = preflightCacheKey(configPath: configPath, launcher: launcher).map {
             "\($0)|strict:\(strict)"
         }

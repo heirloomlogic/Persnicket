@@ -60,6 +60,8 @@ The GitHub Actions workflow (`.github/workflows/lint.yml`) runs on every pull re
 
 Run `PERSNICKET_TEST_BUILD_SYSTEM=native Examples/CompileCheck/verify-large-target.sh` to test native SwiftPM explicitly, or set the variable to `swiftbuild` when the installed toolchain supports it. A failed fixture preserves its scratch directory and prints the log tails.
 
+Run `Examples/CompileCheck/verify-configuration.sh` to exercise root and nested configurations, config additions/edits/removals, skip/resume, repeated strict failures, explicit fallback, and symlink destination configs on supported formatters. It accepts the same `PERSNICKET_TEST_BUILD_SYSTEM` selection and runs in all three CI jobs.
+
 All checks must pass before merge.
 
 ## Release notes

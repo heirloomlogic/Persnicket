@@ -14,11 +14,6 @@ struct Persnipe: CommandPlugin {
             : try context.package.targets(named: targetNames)
 
         pinDeveloperDirectory(toXcodeOf: try? context.tool(named: "swift-format").url)
-        let (launcher, configPath) = try prepareSwiftFormat(
-            projectRoot: context.package.directoryURL,
-            pluginWorkDirectory: context.pluginWorkDirectoryURL
-        )
-
         var sourceTargetNames: [String] = []
         var seenPaths = Set<String>()
         var swiftFilePaths: [String] = []
@@ -53,12 +48,18 @@ struct Persnipe: CommandPlugin {
 
         let names = sourceTargetNames.map { "\"\($0)\"" }.joined(separator: ", ")
         let scope = "\(sourceTargetNames.count == 1 ? "target" : "targets") \(names)"
+        let (launcher, configuration) = try prepareSwiftFormat(
+            projectRoot: context.package.directoryURL,
+            sourceFiles: swiftFilePaths.map { URL(fileURLWithPath: $0) },
+            pluginWorkDirectory: context.pluginWorkDirectoryURL
+        )
+
         var reportedLines = Set<String>()
         switch format(
             filePaths: swiftFilePaths,
             scope: scope,
             launcher: launcher,
-            configPath: configPath,
+            configuration: configuration,
             reportedLines: &reportedLines
         ) {
         case .formatted:
@@ -102,30 +103,31 @@ struct Persnipe: CommandPlugin {
     /// diagnostic — when either is unusable, since nothing could be formatted.
     func prepareSwiftFormat(
         projectRoot: URL,
+        sourceFiles: [URL],
         pluginWorkDirectory: URL
-    ) throws -> (launcher: SwiftFormatLauncher, configPath: String) {
+    ) throws -> (launcher: SwiftFormatLauncher, configuration: ConfigurationSelection) {
         guard let launcher = swiftFormatLauncher() else {
             throw failure(swiftFormatNotFoundMessage(outcome: "nothing was formatted"))
         }
         guard
-            let configPath = try resolveConfiguration(
+            let configuration = try resolveConfiguration(
                 launcher: launcher,
                 projectRoot: projectRoot,
+                sourceFiles: sourceFiles,
                 pluginWorkDirectory: pluginWorkDirectory
             )
         else {
             throw PluginError(message: "Persnipe formatted nothing; see the error above.")
         }
         logSwiftFormatVersion(launcher: launcher)
-        return (launcher, configPath)
+        return (launcher, configuration)
     }
 
     enum FormatOutcome {
         case formatted
         /// swift-format failed on these files, for example on a syntax error.
         case failed
-        /// swift-format itself can't work — it rejects the configuration or the
-        /// options — so every other invocation would fail the same way.
+        /// The formatter or a selected configuration is unusable; stop the command.
         case unusable
     }
 
@@ -139,13 +141,11 @@ struct Persnipe: CommandPlugin {
         filePaths: [String],
         scope: String,
         launcher: SwiftFormatLauncher,
-        configPath: String,
+        configuration: ConfigurationSelection,
         reportedLines: inout Set<String>
     ) -> FormatOutcome {
         let fixedArguments =
-            launcher.leadingArguments + ["format", "--in-place"] + commonSwiftFormatOptions + [
-                "--configuration", configPath,
-            ]
+            launcher.leadingArguments + ["format", "--in-place"] + commonSwiftFormatOptions + configuration.arguments
         let chunks = chunkedSourceFilePaths(filePaths, fixedArguments: fixedArguments)
         var failed = false
         for (index, chunk) in chunks.enumerated() {
@@ -157,7 +157,7 @@ struct Persnipe: CommandPlugin {
                 arguments: fixedArguments + chunk,
                 scope: chunkScope,
                 launcher: launcher,
-                configPath: configPath,
+                configPath: configuration.paths.joined(separator: ", "),
                 reportedLines: &reportedLines
             ) {
             case .formatted:
@@ -221,7 +221,7 @@ struct Persnipe: CommandPlugin {
                         launcher: launcher,
                         configPath: configPath,
                         stderr: stderr,
-                        outcome: "nothing was formatted"
+                        outcome: "formatting stopped; some files may already have changed"
                     )
                 )
                 return .unusable
@@ -506,25 +506,42 @@ struct Persnipe: CommandPlugin {
 
     // MARK: Configuration Resolution
 
-    /// Looks for `.swift-format` in the downstream project root, falling back to an
-    /// embedded default written to the plugin work directory.
-    ///
-    /// Returns nil — after emitting an error — when the configuration is unusable
-    /// (unreadable, a directory, or not a JSON object). Callers must stop: every
-    /// swift-format invocation would fail on it, and follow-up diagnostics would only
-    /// misattribute the problem to the toolchain.
+    /// The configurations to validate and the formatter's explicit fallback arguments.
+    struct ConfigurationSelection {
+        let paths: [String]
+        let arguments: [String]
+    }
+
+    /// Resolves configuration arguments and dependencies. Reports an error and returns
+    /// nil when any selected config is unreadable, a directory, or not a JSON object.
     func resolveConfiguration(
         launcher: SwiftFormatLauncher,
         projectRoot: URL,
+        sourceFiles: [URL],
         pluginWorkDirectory: URL
-    ) throws -> String? {
-        let resolvedPath: String
-        let projectConfig = projectRoot.appendingPathComponent(".swift-format")
+    ) throws -> ConfigurationSelection? {
+        let projectConfig = projectRoot.appendingPathComponent(".swift-format").standardizedFileURL
+        let selection: ConfigurationSelection
         if FileManager.default.fileExists(atPath: projectConfig.path) {
-            Diagnostics.remark(
-                "Using project configuration at \(projectConfig.path)."
-            )
-            resolvedPath = projectConfig.path
+            // Let swift-format choose the nearest ancestor config for each source.
+            // Mirror that search only to validate and track its build dependencies.
+            var paths: Set<String> = [projectConfig.path]
+            var searchedDirectories = Set<String>()
+            for source in sourceFiles {
+                var directory = source.resolvingSymlinksInPath().deletingLastPathComponent().standardizedFileURL
+                while searchedDirectories.insert(directory.path).inserted {
+                    let candidate = directory.appendingPathComponent(".swift-format")
+                    if FileManager.default.fileExists(atPath: candidate.path) {
+                        paths.insert(candidate.path)
+                        break
+                    }
+                    let parent = directory.deletingLastPathComponent()
+                    if parent.path == directory.path { break }
+                    directory = parent
+                }
+            }
+            selection = ConfigurationSelection(paths: paths.sorted(), arguments: [])
+            Diagnostics.remark("Using per-file .swift-format discovery with project config at \(projectConfig.path).")
         } else {
             let fallbackURL = pluginWorkDirectory.appendingPathComponent("swift-format-fallback.json")
             // Rewrite only on change, so the file's mtime stays stable across builds.
@@ -540,31 +557,32 @@ struct Persnipe: CommandPlugin {
                 https://github.com/swiftlang/swift-format/blob/main/Documentation/RuleDocumentation.md
                 """
             )
-            resolvedPath = fallbackURL.path
+            selection = ConfigurationSelection(
+                paths: [fallbackURL.path], arguments: ["--configuration", fallbackURL.path])
         }
 
-        switch validateConfig(at: resolvedPath) {
-        case .ok(let version):
-            Diagnostics.remark(
-                """
-                swift-format plugin preflight:
-                • config: \(resolvedPath)
-                • version: \(version.map(String.init) ?? "unknown")
-                • executable: \(launcher.displayCommand)
-                """
-            )
-            return resolvedPath
-        case .invalid(let reason):
-            // swift-format's own report of this is "Unable to read configuration",
-            // without naming the file — so name it here.
-            Diagnostics.error(
-                """
-                The swift-format configuration at \(resolvedPath) is unusable: \(reason)
-                Fix the file and try again.
-                """
-            )
-            return nil
+        for path in selection.paths {
+            switch validateConfig(at: path) {
+            case .ok(let version):
+                Diagnostics.remark(
+                    """
+                    swift-format plugin preflight:
+                    • config: \(path)
+                    • version: \(version.map(String.init) ?? "unknown")
+                    • executable: \(launcher.displayCommand)
+                    """
+                )
+            case .invalid(let reason):
+                Diagnostics.error(
+                    """
+                    The swift-format configuration at \(path) is unusable: \(reason)
+                    Fix the file and try again.
+                    """
+                )
+                return nil
+            }
         }
+        return selection
     }
 
     /// Best-effort probe of the active swift-format's `--version` output.
@@ -693,7 +711,8 @@ struct Persnipe: CommandPlugin {
         strict: Bool,
         pluginWorkDirectory: URL
     ) -> ProbeResult {
-        let cacheURL = pluginWorkDirectory.appendingPathComponent("preflight-cache.v2")
+        let cacheURL = pluginWorkDirectory.appendingPathComponent(
+            "preflight-cache-\(stableHash(Data(configPath.utf8))).v2")
         let cacheKey = preflightCacheKey(configPath: configPath, launcher: launcher).map {
             "\($0)|strict:\(strict)"
         }
