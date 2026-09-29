@@ -130,7 +130,8 @@ struct Persnipe: CommandPlugin {
     }
 
     /// Runs `swift-format format --in-place` over `filePaths`, emitting a diagnostic
-    /// for any failure. `scope` names the files in messages, such as `target "App"`.
+    /// for any failure. Large source sets are split across safe-sized invocations.
+    /// `scope` names the files in messages, such as `target "App"`.
     /// Warnings swift-format prints on success are surfaced, skipping any line
     /// already in `reportedLines`, so a config warning is reported once, not once
     /// per file and target.
@@ -141,12 +142,45 @@ struct Persnipe: CommandPlugin {
         configPath: String,
         reportedLines: inout Set<String>
     ) -> FormatOutcome {
-        let process = Process()
-        process.executableURL = launcher.executable
-        process.arguments =
+        let fixedArguments =
             launcher.leadingArguments + ["format", "--in-place"] + commonSwiftFormatOptions + [
                 "--configuration", configPath,
-            ] + filePaths
+            ]
+        let chunks = chunkedSourceFilePaths(filePaths, fixedArguments: fixedArguments)
+        var failed = false
+        for chunk in chunks {
+            switch formatChunk(
+                arguments: fixedArguments + chunk,
+                scope: scope,
+                launcher: launcher,
+                configPath: configPath,
+                reportedLines: &reportedLines
+            ) {
+            case .formatted:
+                continue
+            case .failed:
+                failed = true
+            case .unusable:
+                return .unusable
+            }
+        }
+        if failed {
+            return .failed
+        }
+        Diagnostics.remark("Formatted Swift source files in \(scope).")
+        return .formatted
+    }
+
+    private func formatChunk(
+        arguments: [String],
+        scope: String,
+        launcher: SwiftFormatLauncher,
+        configPath: String,
+        reportedLines: inout Set<String>
+    ) -> FormatOutcome {
+        let process = Process()
+        process.executableURL = launcher.executable
+        process.arguments = arguments
 
         let stderrPipe = Pipe()
         process.standardError = stderrPipe
@@ -218,7 +252,6 @@ struct Persnipe: CommandPlugin {
         if !newLines.isEmpty {
             Diagnostics.warning("swift-format reported while formatting \(scope):\n\(newLines.joined(separator: "\n"))")
         }
-        Diagnostics.remark("Formatted Swift source files in \(scope).")
         return .formatted
     }
 
@@ -234,6 +267,36 @@ struct Persnipe: CommandPlugin {
     // Persnipe; `strictModeEnabled`, the probe, and `toolchainSelectionEnvironment`
     // only by Persnoop) but live here so the section stays byte-identical across both
     // targets — the accepted cost of SwiftPM's no-shared-plugin-source rule.
+
+    /// Splits source paths before they reach a process argument limit. The file-count
+    /// cap stays well below Foundation's 4,096-argument ceiling, while the byte cap
+    /// leaves room for the environment and fixed swift-format arguments under ARG_MAX.
+    func chunkedSourceFilePaths(_ filePaths: [String], fixedArguments: [String]) -> [[String]] {
+        let maximumFileCount = 1_000
+        let maximumArgumentBytes = 128 * 1_024
+        let fixedArgumentBytes = fixedArguments.reduce(0) { $0 + $1.utf8.count + 1 }
+        let availablePathBytes = max(maximumArgumentBytes - fixedArgumentBytes, 1)
+
+        var chunks: [[String]] = []
+        var chunk: [String] = []
+        var chunkBytes = 0
+        for path in filePaths {
+            let pathBytes = path.utf8.count + 1
+            if !chunk.isEmpty,
+                chunk.count >= maximumFileCount || chunkBytes + pathBytes > availablePathBytes
+            {
+                chunks.append(chunk)
+                chunk = []
+                chunkBytes = 0
+            }
+            chunk.append(path)
+            chunkBytes += pathBytes
+        }
+        if !chunk.isEmpty {
+            chunks.append(chunk)
+        }
+        return chunks
+    }
 
     /// Resolves how to invoke `swift-format` on the current platform.
     ///

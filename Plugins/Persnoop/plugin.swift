@@ -78,33 +78,44 @@ struct Persnoop: BuildToolPlugin {
             return []
         }
 
-        var arguments =
+        var fixedArguments =
             launcher.leadingArguments + ["lint"] + commonSwiftFormatOptions + [
                 "--configuration", configPath,
             ]
         if strict {
-            arguments.append("--strict")
+            fixedArguments.append("--strict")
         }
-        arguments += sourceFiles.map { $0.path(percentEncoded: false) }
+        let chunks = chunkedSourceFilePaths(
+            sourceFiles.map { $0.path(percentEncoded: false) },
+            fixedArguments: fixedArguments
+        )
 
         let outputsDir = pluginWorkDirectory.appendingPathComponent(
             "outputs",
             isDirectory: true
         )
-        try FileManager.default.createDirectory(
-            at: outputsDir,
-            withIntermediateDirectories: true
-        )
-
-        return [
-            .prebuildCommand(
-                displayName: "swift-format lint (\(targetName))",
-                executable: launcher.executable,
-                arguments: arguments,
-                environment: toolchainSelectionEnvironment(),
-                outputFilesDirectory: outputsDir
+        let environment = toolchainSelectionEnvironment()
+        return try chunks.enumerated().map { index, chunk in
+            let outputFilesDirectory = outputsDir.appendingPathComponent(
+                "chunk-\(index + 1)",
+                isDirectory: true
             )
-        ]
+            try FileManager.default.createDirectory(
+                at: outputFilesDirectory,
+                withIntermediateDirectories: true
+            )
+            let displayName =
+                chunks.count == 1
+                ? "swift-format lint (\(targetName))"
+                : "swift-format lint (\(targetName), chunk \(index + 1) of \(chunks.count))"
+            return .prebuildCommand(
+                displayName: displayName,
+                executable: launcher.executable,
+                arguments: fixedArguments + chunk,
+                environment: environment,
+                outputFilesDirectory: outputFilesDirectory
+            )
+        }
     }
 
     // MARK: - Shared Plugin Infrastructure (must be identical across all plugin targets)
@@ -113,6 +124,36 @@ struct Persnoop: BuildToolPlugin {
     // Persnipe; `strictModeEnabled`, the probe, and `toolchainSelectionEnvironment`
     // only by Persnoop) but live here so the section stays byte-identical across both
     // targets — the accepted cost of SwiftPM's no-shared-plugin-source rule.
+
+    /// Splits source paths before they reach a process argument limit. The file-count
+    /// cap stays well below Foundation's 4,096-argument ceiling, while the byte cap
+    /// leaves room for the environment and fixed swift-format arguments under ARG_MAX.
+    func chunkedSourceFilePaths(_ filePaths: [String], fixedArguments: [String]) -> [[String]] {
+        let maximumFileCount = 1_000
+        let maximumArgumentBytes = 128 * 1_024
+        let fixedArgumentBytes = fixedArguments.reduce(0) { $0 + $1.utf8.count + 1 }
+        let availablePathBytes = max(maximumArgumentBytes - fixedArgumentBytes, 1)
+
+        var chunks: [[String]] = []
+        var chunk: [String] = []
+        var chunkBytes = 0
+        for path in filePaths {
+            let pathBytes = path.utf8.count + 1
+            if !chunk.isEmpty,
+                chunk.count >= maximumFileCount || chunkBytes + pathBytes > availablePathBytes
+            {
+                chunks.append(chunk)
+                chunk = []
+                chunkBytes = 0
+            }
+            chunk.append(path)
+            chunkBytes += pathBytes
+        }
+        if !chunk.isEmpty {
+            chunks.append(chunk)
+        }
+        return chunks
+    }
 
     /// Resolves how to invoke `swift-format` on the current platform.
     ///
