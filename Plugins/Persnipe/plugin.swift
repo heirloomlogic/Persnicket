@@ -506,10 +506,12 @@ struct Persnipe: CommandPlugin {
 
     // MARK: Configuration Resolution
 
-    /// The configurations to validate and the formatter's explicit fallback arguments.
+    /// The configurations to validate, the formatter's explicit fallback arguments, and
+    /// the `.swift-format-ignore` files that apply to the sources.
     struct ConfigurationSelection {
         let paths: [String]
         let arguments: [String]
+        let ignoreFilePaths: [String]
     }
 
     /// Resolves configuration arguments and dependencies. Reports an error and returns
@@ -520,27 +522,41 @@ struct Persnipe: CommandPlugin {
         sourceFiles: [URL],
         pluginWorkDirectory: URL
     ) throws -> ConfigurationSelection? {
+        // Mirror swift-format's upward search from each source, only to validate and
+        // track its build dependencies: the nearest `.swift-format` configures the file,
+        // and swift-format 604+ skips files matched by any `.swift-format-ignore` found
+        // up to and including that directory, or up to the root when there is none.
+        // The ignore search runs even when `--configuration` is explicit.
+        var discoveredConfigs = Set<String>()
+        var ignoreFiles = Set<String>()
+        var searchedDirectories = Set<String>()
+        for source in sourceFiles {
+            var directory = source.resolvingSymlinksInPath().deletingLastPathComponent().standardizedFileURL
+            while searchedDirectories.insert(directory.path).inserted {
+                let ignoreFile = directory.appendingPathComponent(".swift-format-ignore")
+                if FileManager.default.fileExists(atPath: ignoreFile.path) {
+                    ignoreFiles.insert(ignoreFile.path)
+                }
+                let candidate = directory.appendingPathComponent(".swift-format")
+                if FileManager.default.fileExists(atPath: candidate.path) {
+                    discoveredConfigs.insert(candidate.path)
+                    break
+                }
+                let parent = directory.deletingLastPathComponent()
+                if parent.path == directory.path { break }
+                directory = parent
+            }
+        }
+
         let projectConfig = projectRoot.appendingPathComponent(".swift-format").standardizedFileURL
         let selection: ConfigurationSelection
         if FileManager.default.fileExists(atPath: projectConfig.path) {
             // Let swift-format choose the nearest ancestor config for each source.
-            // Mirror that search only to validate and track its build dependencies.
-            var paths: Set<String> = [projectConfig.path]
-            var searchedDirectories = Set<String>()
-            for source in sourceFiles {
-                var directory = source.resolvingSymlinksInPath().deletingLastPathComponent().standardizedFileURL
-                while searchedDirectories.insert(directory.path).inserted {
-                    let candidate = directory.appendingPathComponent(".swift-format")
-                    if FileManager.default.fileExists(atPath: candidate.path) {
-                        paths.insert(candidate.path)
-                        break
-                    }
-                    let parent = directory.deletingLastPathComponent()
-                    if parent.path == directory.path { break }
-                    directory = parent
-                }
-            }
-            selection = ConfigurationSelection(paths: paths.sorted(), arguments: [])
+            selection = ConfigurationSelection(
+                paths: discoveredConfigs.union([projectConfig.path]).sorted(),
+                arguments: [],
+                ignoreFilePaths: ignoreFiles.sorted()
+            )
             Diagnostics.remark("Using per-file .swift-format discovery with project config at \(projectConfig.path).")
         } else {
             let fallbackURL = pluginWorkDirectory.appendingPathComponent("swift-format-fallback.json")
@@ -558,7 +574,14 @@ struct Persnipe: CommandPlugin {
                 """
             )
             selection = ConfigurationSelection(
-                paths: [fallbackURL.path], arguments: ["--configuration", fallbackURL.path])
+                paths: [fallbackURL.path],
+                arguments: ["--configuration", fallbackURL.path],
+                ignoreFilePaths: ignoreFiles.sorted()
+            )
+        }
+
+        for path in selection.ignoreFilePaths {
+            Diagnostics.remark("Found \(path); swift-format from Swift 6.4 skips the sources it matches.")
         }
 
         for path in selection.paths {

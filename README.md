@@ -57,7 +57,7 @@ Apply the plugin to any target you want linted when its Swift sources or applica
 
 In Xcode and `swift build`, lint violations are reported as build warnings when lint runs, and they do not fail the build. Like incremental compiler warnings, they are not replayed on later no-op builds.
 
-Persnoop declares the source files and applicable configurations as command inputs and includes the preflight tool/config identity in each lint command. After each successful lint chunk, it writes a generated `.swift` file containing one comment; SwiftPM uses that stamp to skip unchanged lint work. These stamps add no declarations or executable code, but they are generated sources in the target's build graph. If the source set shrinks or lint is skipped, unused stamps remain until the build directory is cleaned so SwiftPM can keep its generated-source list valid.
+Persnoop declares the source files, applicable configurations, and applicable [ignore files](#ignoring-files) as command inputs and includes the preflight tool/config identity in each lint command. After each successful lint chunk, it writes a generated `.swift` file containing one comment; SwiftPM uses that stamp to skip unchanged lint work. These stamps add no declarations or executable code, but they are generated sources in the target's build graph. If the source set shrinks or lint is skipped, unused stamps remain until the build directory is cleaned so SwiftPM can keep its generated-source list valid.
 
 A small planning command refreshes a marker on each build so native SwiftPM re-evaluates configuration removal, configuration addition, and formatter replacement. Its separate comment-only Swift stamp is written once. This adds planning work to unchanged builds; the cached preflight probe and unchanged lint chunks still skip execution.
 
@@ -127,6 +127,14 @@ If no project-root `.swift-format` file is present, the plugins pass their bundl
 - `FileScopedDeclarationPrivacy` set to `private`
 
 Persnoop validates the root and selected nested configurations, checks them against the active formatter, and tracks them as lint inputs. Adding, editing, or removing a configuration reruns lint on the next SwiftPM build. Xcode may require a build re-plan to pick up configuration additions or removals.
+
+### Ignoring files
+
+From Swift 6.4, `swift-format` skips any source file matched by a `.swift-format-ignore` file, even when the file is named explicitly, so both plugins inherit it: Persnoop doesn't lint a matched file and Persnipe doesn't format it. The file uses `.gitignore` pattern syntax, including `**` and `!` negation, with patterns relative to the directory that contains it. Earlier toolchains don't read these files, so a CI job on an older Swift still lints what a Swift 6.4 build skips. To exclude a single file on every toolchain, put `// swift-format-ignore-file` at its top instead.
+
+For each source file, `swift-format` collects every `.swift-format-ignore` from the file's directory upward and stops at the first directory that contains a `.swift-format`, including that directory's ignore file. An ignore file above a nested `.swift-format` therefore never reaches the files that configuration governs; put the pattern beside or below the nested configuration. When the project has no `.swift-format` and the plugins use the bundled fallback, the search continues past the project root, so an ignore file in a parent directory can apply.
+
+Persnoop mirrors that search and tracks the ignore files it finds as lint inputs, so adding, editing, or removing one reruns lint on the next SwiftPM build. As with configurations, Xcode may require a build re-plan to pick up additions or removals.
 
 To use your own configuration, create a `.swift-format` file in the root of your project. You can generate a starter configuration with the following:
 
