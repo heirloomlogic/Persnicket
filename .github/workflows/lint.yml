@@ -305,7 +305,9 @@ jobs:
     # The exact release and registry manifest, not `swift:6.0`, which floats to the
     # latest 6.0.x patch and would test that instead of the floor.
     container: swift:6.0.0@sha256:c0d756c88bc51f8caa1c122f96d9aebe9c48d20dd8196b5cbd5a673df5f03d35
-    timeout-minutes: 10
+    # The fixture suite can exceed 10 minutes on hosted runners. Keep the same
+    # headroom as the other jobs so the final checks can finish.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
