@@ -55,6 +55,8 @@ Apply the plugin to any target you want linted when its Swift sources or applica
 )
 ```
 
+For an Xcode project, attach **Persnoop** to each target under **Build Phases → Run Build Tool Plug-ins** after adding the package dependency.
+
 In Xcode and `swift build`, lint violations are reported as build warnings when lint runs, and they do not fail the build. Like incremental compiler warnings, they are not replayed on later no-op builds.
 
 Persnoop declares the source files, applicable configurations, and applicable [ignore files](#ignoring-files) as command inputs and includes the preflight tool/config identity in each lint command. After each successful lint chunk, it writes a generated `.swift` file containing one comment; SwiftPM uses that stamp to skip unchanged lint work. These stamps add no declarations or executable code, but they are generated sources in the target's build graph. If the source set shrinks or lint is skipped, unused stamps remain until the build directory is cleaned so SwiftPM can keep its generated-source list valid.
@@ -83,7 +85,7 @@ If your package is itself consumed as a dependency, applying Persnoop pulls Pers
 
 ### Command Plugin (on-demand formatting)
 
-The command plugin registers the SwiftPM built-in `format-source-code` verb. Run it from the command line:
+The command plugin registers the SwiftPM built-in `format-source-code` verb. Persnipe is available package-wide once the dependency is added; it needs no target attachment. Run it from the command line:
 
 ```bash
 swift package plugin --allow-writing-to-package-directory format-source-code
@@ -136,7 +138,9 @@ For each source file, `swift-format` collects every `.swift-format-ignore` from 
 
 Persnoop mirrors that search and tracks the ignore files it finds as lint inputs, so adding, editing, or removing one reruns lint on the next SwiftPM build. As with configurations, Xcode may require a build re-plan to pick up additions or removals.
 
-To use your own configuration, create a `.swift-format` file in the root of your project. You can generate a starter configuration with the following:
+To use your own configuration, create a `.swift-format` file in the root of your project. Choose a starting point: generate the active formatter's vanilla defaults to select your own rules, or copy [Persnicket's opinionated configuration](.swift-format) to preserve the bundled defaults while making them editable.
+
+Generate vanilla defaults:
 
 ```bash
 # macOS
@@ -144,6 +148,12 @@ xcrun swift-format dump-configuration > .swift-format
 
 # Linux
 swift-format dump-configuration > .swift-format
+```
+
+Or, after resolving Persnicket, copy its configuration from the dependency checkout, using this command only when you have no existing project configuration to preserve:
+
+```bash
+cp .build/checkouts/Persnicket/.swift-format .swift-format
 ```
 
 ## CI
