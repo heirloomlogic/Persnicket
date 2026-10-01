@@ -100,6 +100,33 @@ build restored
 assert_linted
 grep -q 'NeverForceUnwrap' restored.log
 
+# swift-format 604+ skips sources matched by .swift-format-ignore, even when named
+# explicitly. Probe the formatter rather than parse versions; "main" builds exist.
+mkdir ignore-probe
+printf 'let  probe = 1\n' > ignore-probe/Probe.swift
+printf 'Probe.swift\n' > ignore-probe/.swift-format-ignore
+ignore_supported=0
+if [ -z "$("$real_formatter" lint ignore-probe/Probe.swift 2>&1)" ]; then
+    ignore_supported=1
+    printf 'Check.swift\n' > Sources/Check/Nested/.swift-format-ignore
+    build ignore-added
+    assert_linted
+    assert_absent 'NeverForceUnwrap' ignore-added.log
+    printf '# Nothing ignored.\n' > Sources/Check/Nested/.swift-format-ignore
+    build ignore-edited
+    assert_linted
+    grep -q 'NeverForceUnwrap' ignore-edited.log
+    printf 'Check.swift\n' > Sources/Check/Nested/.swift-format-ignore
+    build ignore-restored
+    assert_linted
+    assert_absent 'NeverForceUnwrap' ignore-restored.log
+    rm Sources/Check/Nested/.swift-format-ignore
+    build ignore-removed
+    assert_linted
+    grep -q 'NeverForceUnwrap' ignore-removed.log
+fi
+rm -r ignore-probe
+
 # Skip must bypass even invalid configuration and strict mode, then resume lint.
 printf '{ invalid\n' > .swift-format
 (PERSNICKET_SKIP=1 PERSNICKET_STRICT=1 build skipped)
@@ -186,4 +213,9 @@ grep -q 'PERSNICKET_SKIP=1' skipped-sentinel.log
 rm .persnicket-strict
 (PERSNICKET_SKIP=0 build enabled)
 assert_linted
-echo "ok: root/nested discovery, configuration transitions, skip/resume, strict failures, explicit fallback, and supported symlinks"
+if [ "$ignore_supported" -eq 1 ]; then
+    ignore_result="ignore-file transitions"
+else
+    ignore_result="no ignore-file support in this formatter"
+fi
+echo "ok: root/nested discovery, configuration transitions, skip/resume, strict failures, explicit fallback, supported symlinks, and $ignore_result"
